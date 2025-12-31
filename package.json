@@ -4,12 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "echo 'Using pre-built dist'",
-    "start": "node server.js",
-    "preview": "vite preview"
+    "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.22.1"
+    "express": "^4.21.0"
   }
 }
