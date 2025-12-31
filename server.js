@@ -9,7 +9,8 @@ const app = express();
 
 app.use(express.static(path.join(__dirname, 'dist')));
 
-app.get('/{*path}', (req, res) => {
+// Fallback - serve index.html for all routes
+app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
