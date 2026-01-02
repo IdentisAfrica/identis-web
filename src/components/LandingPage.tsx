@@ -25,10 +25,11 @@ export default function LandingPage({ onStartVerification }: Props) {
       {/* Navigation */}
       <nav className="relative z-50 max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
-            <span className="text-white font-black text-lg">ID</span>
-          </div>
-          <span className="text-2xl font-black">IDENTIS</span>
+          <img 
+            src="/identis-logo.png" 
+            alt="IDENTIS" 
+            className="h-12 w-auto"
+          />
         </div>
         <button
           onClick={onStartVerification}
@@ -38,7 +39,7 @@ export default function LandingPage({ onStartVerification }: Props) {
         </button>
       </nav>
 
-      {/* Hero */}
+      {/* Hero Section */}
       <section className="relative z-10 max-w-7xl mx-auto px-6 pt-16 pb-24">
         <div className="grid lg:grid-cols-2 gap-16 items-center">
           <div>
@@ -52,7 +53,9 @@ export default function LandingPage({ onStartVerification }: Props) {
               <span className="block bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
                 Everything
               </span>
-              <span className="block text-3xl text-gray-400 font-medium mt-4">in P2P Trading</span>
+              <span className="block text-3xl text-gray-400 font-medium mt-4">
+                in P2P Trading
+              </span>
             </h1>
 
             <p className="text-xl text-gray-400 mb-8 max-w-lg">
@@ -72,13 +75,15 @@ export default function LandingPage({ onStartVerification }: Props) {
 
             <div className="flex items-center gap-4">
               <div className="flex -space-x-2">
-                {['😊', '👨🏿', '👩🏽', '👨🏻'].map((e, i) => (
+                {['😊', '👨🏿', '👩🏽', '👨🏻'].map((emoji, i) => (
                   <div key={i} className="w-8 h-8 bg-gray-800 rounded-full border-2 border-gray-900 flex items-center justify-center">
-                    {e}
+                    {emoji}
                   </div>
                 ))}
               </div>
-              <div className="text-sm text-gray-500">Trusted by 10,000+ traders</div>
+              <div className="text-sm text-gray-500">
+                Trusted by 10,000+ traders
+              </div>
             </div>
           </div>
 
@@ -88,12 +93,12 @@ export default function LandingPage({ onStartVerification }: Props) {
             <div className="relative bg-gray-900 rounded-3xl p-8 border border-gray-800">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-                    <span className="text-white font-bold text-xs">ID</span>
-                  </div>
+                  <img src="/apple-touch-icon.png" alt="IDENTIS" className="w-8 h-8 rounded-lg" />
                   <span className="font-bold">IDENTIS Certificate</span>
                 </div>
-                <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-sm">✓ Verified</span>
+                <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-sm">
+                  ✓ Verified
+                </span>
               </div>
 
               <div className="text-center py-8">
@@ -105,9 +110,9 @@ export default function LandingPage({ onStartVerification }: Props) {
               </div>
 
               <div className="space-y-2">
-                {['Phone Verified', 'Face Verified', 'BVN Verified'].map((item, i) => (
+                {['Phone Verified', 'Face Verified', 'BVN Verified'].map((check, i) => (
                   <div key={i} className="flex items-center justify-between px-4 py-3 bg-gray-800/50 rounded-xl">
-                    <span>{item}</span>
+                    <span>{check}</span>
                     <span className="text-emerald-400">✓</span>
                   </div>
                 ))}
@@ -117,7 +122,7 @@ export default function LandingPage({ onStartVerification }: Props) {
         </div>
       </section>
 
-      {/* Stats */}
+      {/* Stats Bar */}
       <section className="relative z-10 border-y border-gray-800 bg-gray-900/50">
         <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
           {[
@@ -162,18 +167,20 @@ export default function LandingPage({ onStartVerification }: Props) {
               { level: 'FULLY TRUSTED', method: 'BVN', score: '100', color: 'emerald', rec: true },
               { level: 'MODERATELY TRUSTED', method: 'NIN', score: '75', color: 'blue', rec: false },
               { level: 'LIMITED TRUST', method: 'SIM Age', score: '65', color: 'amber', rec: false },
-            ].map((tier, i) => (
-              <div key={i} className={`bg-gray-800 rounded-3xl p-8 ${tier.rec ? 'ring-2 ring-emerald-500' : ''}`}>
-                {tier.rec && <div className="text-emerald-400 text-sm font-bold mb-4">RECOMMENDED</div>}
+            ].map((item, i) => (
+              <div key={i} className={`bg-gray-800 rounded-3xl p-8 ${item.rec ? 'ring-2 ring-emerald-500' : ''}`}>
+                {item.rec && <div className="text-emerald-400 text-sm font-bold mb-4">RECOMMENDED</div>}
                 <div className={`inline-block px-3 py-1 rounded-full text-sm font-bold mb-4 ${
-                  tier.color === 'emerald' ? 'bg-emerald-500/20 text-emerald-400' :
-                  tier.color === 'blue' ? 'bg-blue-500/20 text-blue-400' :
+                  item.color === 'emerald' ? 'bg-emerald-500/20 text-emerald-400' :
+                  item.color === 'blue' ? 'bg-blue-500/20 text-blue-400' :
                   'bg-amber-500/20 text-amber-400'
                 }`}>
-                  {tier.level}
+                  {item.level}
                 </div>
-                <h3 className="text-xl font-bold mb-2">{tier.method} Verification</h3>
-                <div className="text-4xl font-black mb-4">{tier.score}<span className="text-lg text-gray-500">/100</span></div>
+                <h3 className="text-xl font-bold mb-2">{item.method} Verification</h3>
+                <div className="text-4xl font-black mb-4">
+                  {item.score}<span className="text-lg text-gray-500">/100</span>
+                </div>
               </div>
             ))}
           </div>
@@ -184,6 +191,7 @@ export default function LandingPage({ onStartVerification }: Props) {
       <section className="relative z-10 py-24 max-w-3xl mx-auto px-6 text-center">
         <h2 className="text-4xl font-black mb-4">Simple Pricing</h2>
         <p className="text-gray-400 mb-12">One verification. One price.</p>
+        
         <div className="bg-gray-800 rounded-3xl p-12 border border-gray-700">
           <div className="text-6xl font-black mb-4">₦2,500</div>
           <p className="text-gray-400 mb-8">per verification • valid for 1 hour</p>
@@ -200,9 +208,7 @@ export default function LandingPage({ onStartVerification }: Props) {
       <footer className="relative z-10 border-t border-gray-800 py-8">
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-xs">ID</span>
-            </div>
+            <img src="/apple-touch-icon.png" alt="IDENTIS" className="w-8 h-8 rounded-lg" />
             <span className="font-bold">IDENTIS</span>
           </div>
           <p className="text-gray-500 text-sm">© 2025 IDENTIS. Made in Nigeria 🇳🇬</p>
