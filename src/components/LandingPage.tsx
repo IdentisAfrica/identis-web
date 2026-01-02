@@ -5,15 +5,6 @@ interface Props {
 }
 
 export default function LandingPage({ onStartVerification }: Props) {
-  const [verifiedCount, setVerifiedCount] = useState(12847)
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setVerifiedCount(prev => prev + Math.floor(Math.random() * 3))
-    }, 5000)
-    return () => clearInterval(interval)
-  }, [])
-
   return (
     <div className="min-h-screen bg-[#0a0f1c] text-white">
       {/* Background effects */}
@@ -28,7 +19,7 @@ export default function LandingPage({ onStartVerification }: Props) {
           <img 
             src="/identis-logo.png" 
             alt="IDENTIS" 
-            className="h-12 w-auto"
+            className="h-20 w-auto"
           />
         </div>
         <button
@@ -40,14 +31,9 @@ export default function LandingPage({ onStartVerification }: Props) {
       </nav>
 
       {/* Hero Section */}
-      <section className="relative z-10 max-w-7xl mx-auto px-6 pt-16 pb-24">
+      <section className="relative z-10 max-w-7xl mx-auto px-6 pt-8 pb-24">
         <div className="grid lg:grid-cols-2 gap-16 items-center">
           <div>
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-full mb-8">
-              <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-              <span className="text-emerald-400 text-sm">{verifiedCount.toLocaleString()} traders verified</span>
-            </div>
-
             <h1 className="text-5xl md:text-7xl font-black leading-tight mb-6">
               Trust is
               <span className="block bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
@@ -71,19 +57,6 @@ export default function LandingPage({ onStartVerification }: Props) {
               >
                 Verify Now — ₦2,500 →
               </button>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <div className="flex -space-x-2">
-                {['😊', '👨🏿', '👩🏽', '👨🏻'].map((emoji, i) => (
-                  <div key={i} className="w-8 h-8 bg-gray-800 rounded-full border-2 border-gray-900 flex items-center justify-center">
-                    {emoji}
-                  </div>
-                ))}
-              </div>
-              <div className="text-sm text-gray-500">
-                Trusted by 10,000+ traders
-              </div>
             </div>
           </div>
 
@@ -126,9 +99,9 @@ export default function LandingPage({ onStartVerification }: Props) {
       <section className="relative z-10 border-y border-gray-800 bg-gray-900/50">
         <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
           {[
-            { value: '50,000+', label: 'Verifications' },
-            { value: '<60s', label: 'Avg. Time' },
+            { value: '<60s', label: 'Verification Time' },
             { value: '99.9%', label: 'Accuracy' },
+            { value: 'BVN', label: 'Verified Identity' },
             { value: '₦0', label: 'Fraud Losses' },
           ].map((stat, i) => (
             <div key={i}>
