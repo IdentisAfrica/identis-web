@@ -7,7 +7,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: {
+        navy: {
           50: '#eff6ff',
           100: '#dbeafe',
           200: '#bfdbfe',
@@ -18,8 +18,17 @@ export default {
           700: '#1d4ed8',
           800: '#1e40af',
           900: '#1e3a8a',
-        }
-      }
+          950: '#172554',
+        },
+      },
+      fontFamily: {
+        heading: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        body: ['DM Sans', 'system-ui', 'sans-serif'],
+        mono: ['DM Mono', 'monospace'],
+      },
+      boxShadow: {
+        'navy': '0 10px 40px -10px rgba(30, 64, 175, 0.3)',
+      },
     },
   },
   plugins: [],
