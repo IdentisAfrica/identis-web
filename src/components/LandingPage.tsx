@@ -84,7 +84,7 @@ export default function LandingPage({ onStartVerification }: Props) {
                     <path d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-xl font-bold text-emerald-400">FULLY VERIFIED</p>
+                <p className="text-xl font-bold text-emerald-400">Fully Verified</p>
                 <p className="text-navy-400 text-sm mt-1">BVN Verified</p>
               </div>
 
