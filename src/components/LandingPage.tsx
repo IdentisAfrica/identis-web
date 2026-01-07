@@ -70,7 +70,7 @@ export default function LandingPage({ onStartVerification }: Props) {
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <img src="/apple-touch-icon.png" alt="IDENTIS" className="w-8 h-8 rounded-lg" />
-                  <span className="font-heading font-bold">IDENTIS Certificate</span>
+                  <span className="font-bold">IDENTIS Certificate</span>
                 </div>
                 <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-sm font-semibold">
                   ✓ Verified
@@ -84,14 +84,14 @@ export default function LandingPage({ onStartVerification }: Props) {
                     <path d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-xl font-heading font-bold text-emerald-400">FULLY VERIFIED</p>
-                <p className="text-navy-400 text-sm font-heading mt-1">BVN Verified</p>
+                <p className="text-xl font-bold text-emerald-400">FULLY VERIFIED</p>
+                <p className="text-navy-400 text-sm mt-1">BVN Verified</p>
               </div>
 
               <div className="space-y-2">
                 {['Phone Verified', 'Face Verified', 'BVN Verified'].map((check, i) => (
                   <div key={i} className="flex items-center justify-between px-4 py-3 bg-navy-800/50 rounded-xl">
-                    <span className="font-heading">{check}</span>
+                    <span>{check}</span>
                     <span className="text-emerald-400">✓</span>
                   </div>
                 ))}
@@ -111,7 +111,7 @@ export default function LandingPage({ onStartVerification }: Props) {
             { value: '₦0', label: 'Fraud Losses' },
           ].map((stat, i) => (
             <div key={i}>
-              <p className="text-3xl font-heading font-black">{stat.value}</p>
+              <p className="text-3xl font-black">{stat.value}</p>
               <p className="text-navy-400">{stat.label}</p>
             </div>
           ))}
@@ -129,7 +129,7 @@ export default function LandingPage({ onStartVerification }: Props) {
           ].map((item, i) => (
             <div key={i} className="bg-navy-900/50 border border-navy-800 rounded-3xl p-8">
               <div className="text-5xl mb-4">{item.icon}</div>
-              <div className="text-sm text-navy-400 font-heading mb-2">STEP {item.step}</div>
+              <div className="text-sm text-navy-400 mb-2">STEP {item.step}</div>
               <h3 className="text-xl font-bold mb-2">{item.title}</h3>
               <p className="text-navy-300/70">{item.desc}</p>
             </div>
@@ -148,8 +148,8 @@ export default function LandingPage({ onStartVerification }: Props) {
               { level: 'LIMITED TRUST', method: 'SIM Age', score: '65', color: 'amber', rec: false },
             ].map((item, i) => (
               <div key={i} className={`bg-navy-900 border border-navy-800 rounded-3xl p-8 ${item.rec ? 'ring-2 ring-emerald-500' : ''}`}>
-                {item.rec && <div className="text-emerald-400 text-sm font-heading font-bold mb-4">RECOMMENDED</div>}
-                <div className={`inline-block px-3 py-1 rounded-full text-sm font-heading font-bold mb-4 ${
+                {item.rec && <div className="text-emerald-400 text-sm font-bold mb-4">RECOMMENDED</div>}
+                <div className={`inline-block px-3 py-1 rounded-full text-sm font-bold mb-4 ${
                   item.color === 'emerald' ? 'bg-emerald-500/20 text-emerald-400' :
                   item.color === 'navy' ? 'bg-navy-500/20 text-navy-300' :
                   'bg-amber-500/20 text-amber-400'
@@ -188,7 +188,7 @@ export default function LandingPage({ onStartVerification }: Props) {
         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <img src="/apple-touch-icon.png" alt="IDENTIS" className="w-8 h-8 rounded-lg" />
-            <span className="font-heading font-bold">IDENTIS</span>
+            <span className="font-bold">IDENTIS</span>
           </div>
           <p className="text-navy-500 text-sm">© 2025 IDENTIS. Made in Nigeria 🇳🇬</p>
         </div>
