@@ -58,7 +58,7 @@ export default function LandingPage({ onStartVerification }: Props) {
                 onClick={onStartVerification}
                 className="px-8 py-4 bg-gradient-to-b from-navy-600 to-navy-700 hover:from-navy-700 hover:to-navy-800 rounded-2xl font-bold text-lg transition-all shadow-xl shadow-navy-900/50"
               >
-                Get Verified — ₦2,500 →
+                Get Verified Now →
               </button>
             </div>
           </div>
@@ -78,9 +78,11 @@ export default function LandingPage({ onStartVerification }: Props) {
               </div>
 
               <div className="text-center py-8">
-                {/* Checkmark instead of 95 */}
-                <div className="inline-flex items-center justify-center w-28 h-28 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg shadow-emerald-500/30 mb-4">
-                  <span className="text-5xl">✓</span>
+                {/* Big thick checkmark */}
+                <div className="inline-flex items-center justify-center w-32 h-32 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg shadow-emerald-500/30 mb-4">
+                  <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 13l4 4L19 7" />
+                  </svg>
                 </div>
                 <p className="text-xl font-bold text-emerald-400">FULLY VERIFIED</p>
                 <p className="text-navy-400 text-sm mt-1">BVN Verified</p>
