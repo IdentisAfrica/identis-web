@@ -42,10 +42,15 @@ export default function LandingPage({ onStartVerification }: Props) {
               </span>
             </h1>
 
-            <p className="text-xl text-navy-300/70 mb-8 max-w-lg">
+            <p className="text-xl text-navy-300/70 mb-4 max-w-lg">
               Verify anyone in <span className="text-white font-semibold">under 60 seconds</span>. 
               Share a trust certificate before every trade.
               <span className="text-emerald-400 font-semibold"> Zero scams.</span>
+            </p>
+
+            {/* Trust line */}
+            <p className="text-lg text-emerald-400 font-semibold mb-8">
+              🔒 Get Verified and Trade Safe
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 mb-8">
@@ -53,7 +58,7 @@ export default function LandingPage({ onStartVerification }: Props) {
                 onClick={onStartVerification}
                 className="px-8 py-4 bg-gradient-to-b from-navy-600 to-navy-700 hover:from-navy-700 hover:to-navy-800 rounded-2xl font-bold text-lg transition-all shadow-xl shadow-navy-900/50"
               >
-                Verify Now — ₦2,500 →
+                Get Verified — ₦2,500 →
               </button>
             </div>
           </div>
@@ -73,10 +78,11 @@ export default function LandingPage({ onStartVerification }: Props) {
               </div>
 
               <div className="text-center py-8">
+                {/* Checkmark instead of 95 */}
                 <div className="inline-flex items-center justify-center w-28 h-28 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg shadow-emerald-500/30 mb-4">
-                  <span className="text-4xl font-black">95</span>
+                  <span className="text-5xl">✓</span>
                 </div>
-                <p className="text-xl font-bold text-emerald-400">FULLY TRUSTED</p>
+                <p className="text-xl font-bold text-emerald-400">FULLY VERIFIED</p>
                 <p className="text-navy-400 text-sm mt-1">BVN Verified</p>
               </div>
 
@@ -170,7 +176,7 @@ export default function LandingPage({ onStartVerification }: Props) {
             onClick={onStartVerification}
             className="px-12 py-5 bg-gradient-to-b from-navy-600 to-navy-700 hover:from-navy-700 hover:to-navy-800 rounded-2xl font-bold text-xl transition-all shadow-xl shadow-navy-900/50"
           >
-            Get Verified Now →
+            Get Verified & Trade Safe →
           </button>
         </div>
       </section>
