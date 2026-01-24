@@ -309,12 +309,12 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
         detected = m.mouth > baseline.mouth * SMILE_THRESHOLD
         break
       case 'turnLeft':
-        // Negative turn value = turned left
-        detected = m.turn < -TURN_THRESHOLD
+        // Positive turn value = turned left (mirrored)
+        detected = m.turn > TURN_THRESHOLD
         break
       case 'turnRight':
-        // Positive turn value = turned right
-        detected = m.turn > TURN_THRESHOLD
+        // Negative turn value = turned right (mirrored)
+        detected = m.turn < -TURN_THRESHOLD
         break
     }
 
