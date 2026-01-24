@@ -18,9 +18,9 @@ interface VerificationData {
 }
 
 export default function VerificationFlow({ onBack }: Props) {
-  // START AT LIVENESS FOR TESTING - change back to 'phone' for production
-  const [step, setStep] = useState<Step>('liveness')
-  const [data, setData] = useState<VerificationData>({ verificationId: 'test-123', phone: '08012345678' })
+// Production mode
+  const [step, setStep] = useState<Step>('phone')
+  const [data, setData] = useState<VerificationData>({})
 
   const updateData = (newData: Partial<VerificationData>) => {
     setData(prev => ({ ...prev, ...newData }))
