@@ -524,7 +524,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       <div className="relative aspect-[4/3] bg-gray-900 rounded-2xl overflow-hidden">
         <video
           ref={videoRef}
-          className="w-full h-full object-cover"
+         className="w-full h-full object-cover scale-x-[-1]"
           playsInline
           muted
         />
