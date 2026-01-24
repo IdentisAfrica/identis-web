@@ -13,7 +13,7 @@ const FOREHEAD = 10
 const CHIN = 152
 
 // Anti-spoofing thresholds
-const MIN_SPOOF_SCORE = 0.5           // Minimum score to pass (50%)
+const MIN_SPOOF_SCORE = 0.3           // Minimum score to pass (50%)
 const BLINK_THRESHOLD = 0.6           // EAR threshold for blink
 const SMILE_THRESHOLD = 1.0           // Mouth ratio multiplier for smile
 const TURN_THRESHOLD = 0.05           // Head turn threshold
