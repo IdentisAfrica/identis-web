@@ -170,7 +170,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
         
         // Turn detection - look for significant movement
         if (step === 'turn') {
-          if (result.movement > movementThreshold * 1.5) {
+          if (result.movement > movementThreshold * 1.0) {
             turnCountRef.current++
             if (turnCountRef.current > 10) {
               setActionDetected(true)
