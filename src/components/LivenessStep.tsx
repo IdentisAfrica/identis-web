@@ -2,24 +2,61 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://identis-production.up.railway.app'
 
-// MediaPipe FaceMesh landmark indices
+// =============================================================================
+// MEDIAPIPE FACEMESH LANDMARK INDICES
+// =============================================================================
 const LEFT_EYE = [362, 385, 387, 263, 373, 380]
 const RIGHT_EYE = [33, 160, 158, 133, 153, 144]
-const MOUTH_OUTER = [61, 291, 0, 17]  // left, right, top, bottom
+const UPPER_LIP = 13
+const LOWER_LIP = 14
+const LEFT_MOUTH = 61
+const RIGHT_MOUTH = 291
 const NOSE_TIP = 1
 const LEFT_CHEEK = 234
 const RIGHT_CHEEK = 454
 const FOREHEAD = 10
 const CHIN = 152
 
-// Anti-spoofing thresholds
-const MIN_SPOOF_SCORE = 0.3           // Minimum score to pass (50%)
-const BLINK_THRESHOLD = 0.6           // EAR threshold for blink
-const SMILE_THRESHOLD = 1.0           // Mouth ratio multiplier for smile
-const TURN_THRESHOLD = 0.03           // Head turn threshold
-const HOLD_REQUIRED = 15              // Frames to hold challenge
-const METRICS_HISTORY_SIZE = 60       // Rolling window for analysis
+// =============================================================================
+// DETECTION THRESHOLDS - TESTED VALUES
+// =============================================================================
+const THRESHOLDS = {
+  // Eye Aspect Ratio: lower = more closed
+  BLINK_THRESHOLD: 0.21,
+  BLINK_OPEN: 0.25,
+  
+  // Mouth ratio: higher = more open
+  SMILE_THRESHOLD: 0.35,
+  
+  // Head turn: nose offset from center
+  TURN_THRESHOLD: 0.06,
+  
+  // Frames to hold each challenge
+  HOLD_FRAMES: 5,
+  
+  // Minimum anti-spoof score to pass (0-1)
+  MIN_SPOOF_SCORE: 0.45,
+  
+  // Micro-movement thresholds (detect static photos)
+  MIN_MOVEMENT: 0.001,
+  MAX_MOVEMENT: 0.08,
+  
+  // Depth variance threshold (detect flat images)
+  MIN_DEPTH_VARIANCE: 0.0001,
+  
+  // Face geometry constraints (relaxed for different face shapes)
+  FACE_WIDTH_MIN: 0.08,
+  FACE_WIDTH_MAX: 0.95,
+  HEIGHT_WIDTH_RATIO_MIN: 0.4,
+  HEIGHT_WIDTH_RATIO_MAX: 4.0,
+  EYE_FACE_RATIO_MIN: 0.1,
+  EYE_FACE_RATIO_MAX: 0.95,
+  NOSE_OFFSET_MAX: 0.6,
+}
 
+// =============================================================================
+// TYPES
+// =============================================================================
 interface Props {
   verificationId: string
   onNext: () => void
@@ -31,614 +68,791 @@ interface Landmark {
   z: number
 }
 
-interface FaceMeshInstance {
-  setOptions: (options: Record<string, unknown>) => void
-  onResults: (callback: (results: FaceMeshResults) => void) => void
-  send: (input: { image: HTMLVideoElement }) => Promise<void>
-}
-
-interface CameraInstance {
-  start: () => Promise<void>
-  stop: () => void
-}
-
 interface FaceMeshResults {
   multiFaceLandmarks?: Landmark[][]
 }
 
-interface Metrics {
-  ear: number
-  mouth: number
-  turn: number
-  movement: number
-  timestamp: number
+interface FaceMeshInstance {
+  setOptions: (options: Record<string, unknown>) => void
+  onResults: (callback: (results: FaceMeshResults) => void) => void
+  send: (input: { image: HTMLVideoElement }) => Promise<void>
+  close: () => void
 }
 
-interface BaselineMetrics {
-  ear: number
-  mouth: number
-  turn: number
+interface Challenge {
+  id: string
+  name: string
+  icon: string
+  check: (landmarks: Landmark[], baseline: Metrics | null) => boolean
+}
+
+interface Metrics {
+  leftEAR: number
+  rightEAR: number
+  mouthRatio: number
+  noseOffset: number
+  landmarks: Landmark[]
 }
 
 declare global {
   interface Window {
     FaceMesh: new (config: { locateFile: (file: string) => string }) => FaceMeshInstance
-    Camera: new (video: HTMLVideoElement, config: { onFrame: () => Promise<void>; width: number; height: number }) => CameraInstance
   }
 }
 
-type ChallengeType = 'blink' | 'smile' | 'turnLeft' | 'turnRight'
-type StepType = 'loading' | 'ready' | 'challenge' | 'verifying' | 'success' | 'failed'
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
 
-// Shuffle array helper
-const shuffle = <T,>(arr: T[]): T[] => {
-  const result = [...arr]
+// Calculate Eye Aspect Ratio (EAR) - lower when eye is closed
+function calcEAR(landmarks: Landmark[], indices: number[]): number {
+  const pts = indices.map(i => landmarks[i])
+  const vertical1 = Math.hypot(pts[1].x - pts[5].x, pts[1].y - pts[5].y)
+  const vertical2 = Math.hypot(pts[2].x - pts[4].x, pts[2].y - pts[4].y)
+  const horizontal = Math.hypot(pts[0].x - pts[3].x, pts[0].y - pts[3].y)
+  return horizontal > 0 ? (vertical1 + vertical2) / (2 * horizontal) : 0
+}
+
+// Calculate mouth openness ratio
+function calcMouthRatio(landmarks: Landmark[]): number {
+  const width = Math.hypot(
+    landmarks[RIGHT_MOUTH].x - landmarks[LEFT_MOUTH].x,
+    landmarks[RIGHT_MOUTH].y - landmarks[LEFT_MOUTH].y
+  )
+  const height = Math.hypot(
+    landmarks[LOWER_LIP].x - landmarks[UPPER_LIP].x,
+    landmarks[LOWER_LIP].y - landmarks[UPPER_LIP].y
+  )
+  return width > 0 ? height / width : 0
+}
+
+// Calculate nose offset from face center (for head turn detection)
+function calcNoseOffset(landmarks: Landmark[]): number {
+  const faceWidth = Math.abs(landmarks[RIGHT_CHEEK].x - landmarks[LEFT_CHEEK].x)
+  const faceCenter = (landmarks[LEFT_CHEEK].x + landmarks[RIGHT_CHEEK].x) / 2
+  const noseOffset = landmarks[NOSE_TIP].x - faceCenter
+  return faceWidth > 0 ? noseOffset / faceWidth : 0
+}
+
+// Calculate depth variance from Z coordinates (flat images have low variance)
+function calcDepthVariance(landmarks: Landmark[]): number {
+  const zValues = landmarks.map(l => l.z)
+  const mean = zValues.reduce((a, b) => a + b, 0) / zValues.length
+  const variance = zValues.reduce((sum, z) => sum + Math.pow(z - mean, 2), 0) / zValues.length
+  return variance
+}
+
+// Calculate movement between frames
+function calcMovement(current: Landmark[], previous: Landmark[]): number {
+  if (!previous || previous.length !== current.length) return 0
+  let totalMovement = 0
+  const sampleIndices = [NOSE_TIP, LEFT_CHEEK, RIGHT_CHEEK, FOREHEAD, CHIN]
+  for (const i of sampleIndices) {
+    totalMovement += Math.hypot(
+      current[i].x - previous[i].x,
+      current[i].y - previous[i].y
+    )
+  }
+  return totalMovement / sampleIndices.length
+}
+
+// Validate face geometry (reject non-face objects)
+function validateFaceGeometry(landmarks: Landmark[]): boolean {
+  const faceWidth = Math.hypot(
+    landmarks[RIGHT_CHEEK].x - landmarks[LEFT_CHEEK].x,
+    landmarks[RIGHT_CHEEK].y - landmarks[LEFT_CHEEK].y
+  )
+  const faceHeight = Math.hypot(
+    landmarks[CHIN].x - landmarks[FOREHEAD].x,
+    landmarks[CHIN].y - landmarks[FOREHEAD].y
+  )
+  const eyeDistance = Math.hypot(
+    landmarks[LEFT_EYE[0]].x - landmarks[RIGHT_EYE[0]].x,
+    landmarks[LEFT_EYE[0]].y - landmarks[RIGHT_EYE[0]].y
+  )
+  const noseOffset = Math.abs(calcNoseOffset(landmarks))
+  
+  const heightWidthRatio = faceHeight / faceWidth
+  const eyeFaceRatio = eyeDistance / faceWidth
+  
+  // Relaxed constraints for different face shapes and angles
+  if (heightWidthRatio < THRESHOLDS.HEIGHT_WIDTH_RATIO_MIN || 
+      heightWidthRatio > THRESHOLDS.HEIGHT_WIDTH_RATIO_MAX) return false
+  if (eyeFaceRatio < THRESHOLDS.EYE_FACE_RATIO_MIN || 
+      eyeFaceRatio > THRESHOLDS.EYE_FACE_RATIO_MAX) return false
+  if (noseOffset > THRESHOLDS.NOSE_OFFSET_MAX) return false
+  if (faceWidth < THRESHOLDS.FACE_WIDTH_MIN || 
+      faceWidth > THRESHOLDS.FACE_WIDTH_MAX) return false
+  
+  return true
+}
+
+// Get current metrics from landmarks
+function getMetrics(landmarks: Landmark[]): Metrics {
+  return {
+    leftEAR: calcEAR(landmarks, LEFT_EYE),
+    rightEAR: calcEAR(landmarks, RIGHT_EYE),
+    mouthRatio: calcMouthRatio(landmarks),
+    noseOffset: calcNoseOffset(landmarks),
+    landmarks: landmarks.slice() // Copy for movement calculation
+  }
+}
+
+// =============================================================================
+// CHALLENGE DEFINITIONS
+// =============================================================================
+function createChallenges(): Challenge[] {
+  return [
+    {
+      id: 'blink',
+      name: 'Blink your eyes',
+      icon: '👁️',
+      check: (landmarks: Landmark[], baseline: Metrics | null) => {
+        const leftEAR = calcEAR(landmarks, LEFT_EYE)
+        const rightEAR = calcEAR(landmarks, RIGHT_EYE)
+        const avgEAR = (leftEAR + rightEAR) / 2
+        
+        // If we have baseline, check for significant drop from baseline
+        if (baseline) {
+          const baselineEAR = (baseline.leftEAR + baseline.rightEAR) / 2
+          const drop = baselineEAR - avgEAR
+          return drop > 0.05 && avgEAR < THRESHOLDS.BLINK_THRESHOLD
+        }
+        
+        // Without baseline, just check absolute threshold
+        return avgEAR < THRESHOLDS.BLINK_THRESHOLD
+      }
+    },
+    {
+      id: 'smile',
+      name: 'Smile naturally',
+      icon: '😊',
+      check: (landmarks: Landmark[], baseline: Metrics | null) => {
+        const mouthRatio = calcMouthRatio(landmarks)
+        
+        // If we have baseline, check for increase from baseline
+        if (baseline) {
+          const increase = mouthRatio - baseline.mouthRatio
+          return increase > 0.1 || mouthRatio > THRESHOLDS.SMILE_THRESHOLD
+        }
+        
+        return mouthRatio > THRESHOLDS.SMILE_THRESHOLD
+      }
+    },
+    {
+      id: 'turn',
+      name: 'Turn your head slightly',
+      icon: '↔️',
+      check: (landmarks: Landmark[], baseline: Metrics | null) => {
+        const noseOffset = calcNoseOffset(landmarks)
+        
+        // If we have baseline, check for change from baseline
+        if (baseline) {
+          const change = Math.abs(noseOffset - baseline.noseOffset)
+          return change > THRESHOLDS.TURN_THRESHOLD || Math.abs(noseOffset) > THRESHOLDS.TURN_THRESHOLD
+        }
+        
+        return Math.abs(noseOffset) > THRESHOLDS.TURN_THRESHOLD
+      }
+    }
+  ]
+}
+
+// Shuffle array (Fisher-Yates)
+function shuffle<T>(array: T[]): T[] {
+  const result = [...array]
   for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]]
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[result[i], result[j]] = [result[j], result[i]]
   }
   return result
 }
 
+// =============================================================================
+// COMPONENT
+// =============================================================================
 export default function LivenessStep({ verificationId, onNext }: Props) {
-  const [step, setStep] = useState<StepType>('loading')
+  // UI State
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [cameraReady, setCameraReady] = useState(false)
+  const [step, setStep] = useState<'init' | 'ready' | 'checking' | 'complete' | 'failed'>('init')
+  const [instruction, setInstruction] = useState('Loading camera...')
   const [faceDetected, setFaceDetected] = useState(false)
-  const [faceValid, setFaceValid] = useState(false)
-  const [challengeIndex, setChallengeIndex] = useState(0)
   const [progress, setProgress] = useState(0)
-  const [instruction, setInstruction] = useState('')
-
+  const [debugInfo, setDebugInfo] = useState('')
+  
+  // Refs
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const faceMeshRef = useRef<FaceMeshInstance | null>(null)
-  const cameraRef = useRef<CameraInstance | null>(null)
-  const selfieRef = useRef<string | null>(null)
-
-  // Challenge tracking refs (to avoid stale closures)
-  const challengesRef = useRef<ChallengeType[]>(shuffle(['blink', 'smile', 'turnLeft', 'turnRight']))
-  const holdFramesRef = useRef(0)
-  const challengeIndexRef = useRef(0)
-  const stepRef = useRef<StepType>('loading')
+  const animationRef = useRef<number | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   
-  // Anti-spoofing refs
-  const metricsHistoryRef = useRef<Metrics[]>([])
-  const baselineRef = useRef<BaselineMetrics | null>(null)
+  // Challenge state refs
+  const challengesRef = useRef<Challenge[]>([])
+  const currentChallengeRef = useRef(0)
+  const holdFramesRef = useRef(0)
+  const completedRef = useRef<string[]>([])
+  const baselineRef = useRef<Metrics | null>(null)
   const lastLandmarksRef = useRef<Landmark[] | null>(null)
-  const spoofScoreRef = useRef(0)
+  const selfieDataRef = useRef<string | null>(null)
+  
+  // Anti-spoof tracking
+  const spoofDataRef = useRef({
+    movements: [] as number[],
+    depthVariances: [] as number[],
+    blinkDetected: false,
+    smileDetected: false,
+    turnDetected: false
+  })
 
-  // Keep stepRef in sync
-  useEffect(() => {
-    stepRef.current = step
-  }, [step])
-
-  useEffect(() => {
-    challengeIndexRef.current = challengeIndex
-  }, [challengeIndex])
-
-  // Calculate Eye Aspect Ratio (EAR) for blink detection
-  const calcEAR = useCallback((landmarks: Landmark[], eyeIndices: number[]): number => {
-    const p = eyeIndices.map(i => landmarks[i])
-    const vertical1 = Math.hypot(p[1].x - p[5].x, p[1].y - p[5].y)
-    const vertical2 = Math.hypot(p[2].x - p[4].x, p[2].y - p[4].y)
-    const horizontal = Math.hypot(p[0].x - p[3].x, p[0].y - p[3].y)
-    return (vertical1 + vertical2) / (2 * horizontal)
-  }, [])
-
-  // Calculate mouth openness ratio
-  const calcMouth = useCallback((landmarks: Landmark[]): number => {
-    const left = landmarks[MOUTH_OUTER[0]]
-    const right = landmarks[MOUTH_OUTER[1]]
-    const top = landmarks[MOUTH_OUTER[2]]
-    const bottom = landmarks[MOUTH_OUTER[3]]
-    const width = Math.hypot(left.x - right.x, left.y - right.y)
-    const height = Math.hypot(top.x - bottom.x, top.y - bottom.y)
-    return height / (width + 0.0001)
-  }, [])
-
-  // Calculate head turn using nose position relative to cheeks
-  const calcTurn = useCallback((landmarks: Landmark[]): number => {
-    const nose = landmarks[NOSE_TIP]
-    const leftCheek = landmarks[LEFT_CHEEK]
-    const rightCheek = landmarks[RIGHT_CHEEK]
-    const faceWidth = Math.abs(rightCheek.x - leftCheek.x)
-    const noseOffset = nose.x - (leftCheek.x + rightCheek.x) / 2
-    return noseOffset / (faceWidth + 0.0001)
-  }, [])
-
-  // Calculate movement between frames
-  const calcMovement = useCallback((landmarks: Landmark[]): number => {
-    const prev = lastLandmarksRef.current
-    if (!prev) return 0
+  // Calculate final spoof score
+  const calculateSpoofScore = useCallback((): number => {
+    const data = spoofDataRef.current
+    let score = 0
     
-    // Track movement of key stable points
-    const indices = [NOSE_TIP, LEFT_CHEEK, RIGHT_CHEEK, FOREHEAD, CHIN]
-    let totalMovement = 0
+    // Challenge completion (0.15 each = 0.45 total)
+    if (data.blinkDetected) score += 0.15
+    if (data.smileDetected) score += 0.15
+    if (data.turnDetected) score += 0.15
     
-    for (const i of indices) {
-      const dx = landmarks[i].x - prev[i].x
-      const dy = landmarks[i].y - prev[i].y
-      const dz = landmarks[i].z - prev[i].z
-      totalMovement += Math.sqrt(dx*dx + dy*dy + dz*dz)
+    // Movement analysis (up to 0.25)
+    if (data.movements.length >= 5) {
+      const avgMovement = data.movements.reduce((a, b) => a + b, 0) / data.movements.length
+      if (avgMovement >= THRESHOLDS.MIN_MOVEMENT && avgMovement <= THRESHOLDS.MAX_MOVEMENT) {
+        score += 0.25
+      } else if (avgMovement > 0) {
+        score += 0.1 // Partial credit
+      }
     }
     
-    return totalMovement / indices.length
-  }, [])
-
-  // Validate face geometry to reject non-faces
-  const validateFaceGeometry = useCallback((landmarks: Landmark[]): boolean => {
-    // Check face has reasonable proportions
-    const leftCheek = landmarks[LEFT_CHEEK]
-    const rightCheek = landmarks[RIGHT_CHEEK]
-    const forehead = landmarks[FOREHEAD]
-    const chin = landmarks[CHIN]
-    const nose = landmarks[NOSE_TIP]
-    
-    const faceWidth = Math.abs(rightCheek.x - leftCheek.x)
-    const faceHeight = Math.abs(chin.y - forehead.y)
-    
-    // Face should be roughly oval (height/width between 1.0 and 2.0)
-    const ratio = faceHeight / (faceWidth + 0.0001)
-    if (ratio < 0.8 || ratio > 2.5) return false
-    
-    // Nose should be roughly centered
-    const noseX = nose.x
-    const faceCenterX = (leftCheek.x + rightCheek.x) / 2
-    const noseOffset = Math.abs(noseX - faceCenterX) / (faceWidth + 0.0001)
-    if (noseOffset > 0.4) return false
-    
-    // Eyes should be above nose
-    const leftEyeCenter = landmarks[LEFT_EYE[0]]
-    const rightEyeCenter = landmarks[RIGHT_EYE[0]]
-    if (leftEyeCenter.y > nose.y || rightEyeCenter.y > nose.y) return false
-    
-    // Face should have reasonable z-depth variance (flat images have less variance)
-    const zValues = [leftCheek.z, rightCheek.z, forehead.z, chin.z, nose.z]
-    const zMean = zValues.reduce((a, b) => a + b, 0) / zValues.length
-    const zVariance = zValues.reduce((sum, z) => sum + Math.pow(z - zMean, 2), 0) / zValues.length
-    if (zVariance < 0.0001) return false  // Too flat - likely a photo
-    
-    return true
-  }, [])
-
-  // Calculate spoof score based on movement patterns
-  const calcSpoofScore = useCallback((): number => {
-    const history = metricsHistoryRef.current
-    if (history.length < 10) return 0.5  // Give benefit of doubt early
-    
-    // Base score for having a valid face detected
-    let score = 0.4
-    
-    // Bonus for natural micro-movements
-    const movements = history.slice(-10).map(m => m.movement)
-    const avgMovement = movements.reduce((a, b) => a + b, 0) / movements.length
-    if (avgMovement > 0.0001) {
-      score += 0.3
+    // Depth variance (up to 0.2)
+    if (data.depthVariances.length >= 3) {
+      const avgDepth = data.depthVariances.reduce((a, b) => a + b, 0) / data.depthVariances.length
+      if (avgDepth > THRESHOLDS.MIN_DEPTH_VARIANCE) {
+        score += 0.2
+      } else if (avgDepth > 0) {
+        score += 0.1 // Partial credit
+      }
     }
     
-    // Bonus for completing challenges (proves interaction)
-    score += 0.3
+    // Bonus for completing all challenges
+    if (completedRef.current.length >= 3) {
+      score += 0.1
+    }
     
-    return Math.min(1, score)
+    return Math.min(score, 1)
   }, [])
 
-  // Process face mesh results
-  const onFaceResults = useCallback((results: FaceMeshResults) => {
-    if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+  // Process each frame from MediaPipe
+  const processResults = useCallback((results: FaceMeshResults) => {
+    if (step !== 'checking' && step !== 'ready') return
+    
+    const landmarks = results.multiFaceLandmarks?.[0]
+    
+    if (!landmarks || landmarks.length < 468) {
       setFaceDetected(false)
-      setFaceValid(false)
+      setDebugInfo('No face detected')
       return
     }
-
-    const landmarks = results.multiFaceLandmarks[0]
-    setFaceDetected(true)
     
     // Validate face geometry
-    const isValidFace = validateFaceGeometry(landmarks)
-    setFaceValid(isValidFace)
-    
-    if (!isValidFace) {
-      lastLandmarksRef.current = landmarks
+    if (!validateFaceGeometry(landmarks)) {
+      setFaceDetected(false)
+      setDebugInfo('Invalid face geometry')
       return
     }
-
-    // Calculate metrics
-    const leftEAR = calcEAR(landmarks, LEFT_EYE)
-    const rightEAR = calcEAR(landmarks, RIGHT_EYE)
-    const ear = (leftEAR + rightEAR) / 2
-    const mouth = calcMouth(landmarks)
-    const turn = calcTurn(landmarks)
-    const movement = calcMovement(landmarks)
-
-    // Add to history
-    const metrics: Metrics = { ear, mouth, turn, movement, timestamp: Date.now() }
-    metricsHistoryRef.current.push(metrics)
-    if (metricsHistoryRef.current.length > METRICS_HISTORY_SIZE) {
-      metricsHistoryRef.current.shift()
+    
+    setFaceDetected(true)
+    
+    // Track movement between frames
+    if (lastLandmarksRef.current) {
+      const movement = calcMovement(landmarks, lastLandmarksRef.current)
+      spoofDataRef.current.movements.push(movement)
+      if (spoofDataRef.current.movements.length > 30) {
+        spoofDataRef.current.movements.shift()
+      }
     }
-
-    // Calculate spoof score
-    spoofScoreRef.current = calcSpoofScore()
-
-    // Establish baseline after 10 frames
-    if (metricsHistoryRef.current.length === 10 && !baselineRef.current) {
-      baselineRef.current = { ear, mouth, turn }
+    lastLandmarksRef.current = landmarks.slice()
+    
+    // Track depth variance
+    const depthVar = calcDepthVariance(landmarks)
+    spoofDataRef.current.depthVariances.push(depthVar)
+    if (spoofDataRef.current.depthVariances.length > 30) {
+      spoofDataRef.current.depthVariances.shift()
     }
-
-    // Store for next frame comparison
-    lastLandmarksRef.current = landmarks
-
-  // Process challenge if in challenge step AND face is still valid
-    if (stepRef.current === 'challenge' && baselineRef.current && isValidFace) {
-      processChallenge({ ear, mouth, turn })
-    } else if (stepRef.current === 'challenge' && !isValidFace) {
-      // Reset progress if face becomes invalid
-      holdFramesRef.current = 0
-      setProgress(0)
+    
+    // If just ready, capture baseline
+    if (step === 'ready' && !baselineRef.current) {
+      baselineRef.current = getMetrics(landmarks)
+      setDebugInfo('Baseline captured - Face detected!')
     }
-  }, [calcEAR, calcMouth, calcTurn, calcMovement, calcSpoofScore, validateFaceGeometry])
-
-  // Process current challenge
-  const processChallenge = useCallback((m: { ear: number; mouth: number; turn: number }) => {
-    const baseline = baselineRef.current
-    if (!baseline) return
-
-    const challenge = challengesRef.current[challengeIndexRef.current]
-    let detected = false
-
-    switch (challenge) {
-      case 'blink':
-        // EAR drops significantly during blink
-        detected = m.ear < baseline.ear * BLINK_THRESHOLD
-        break
-      case 'smile':
-        // Mouth ratio increases during smile
-        detected = m.mouth > baseline.mouth * SMILE_THRESHOLD
-        break
-      case 'turnLeft':
-        // Positive turn value = turned left (mirrored)
-        detected = m.turn > TURN_THRESHOLD
-        break
-      case 'turnRight':
-        // Negative turn value = turned right (mirrored)
-        detected = m.turn < -TURN_THRESHOLD
-        break
-    }
-
-    if (detected) {
-      holdFramesRef.current++
-      const progressPct = Math.min(100, (holdFramesRef.current / HOLD_REQUIRED) * 100)
-      setProgress(progressPct)
+    
+    // If checking, process challenges
+    if (step === 'checking') {
+      const challenges = challengesRef.current
+      const currentIdx = currentChallengeRef.current
       
-      if (holdFramesRef.current >= HOLD_REQUIRED) {
-        // Challenge complete
-        holdFramesRef.current = 0
-        const nextIndex = challengeIndexRef.current + 1
+      if (currentIdx >= challenges.length) {
+        // All challenges done - calculate final score
+        const spoofScore = calculateSpoofScore()
+        console.log('Final spoof score:', spoofScore)
+        setDebugInfo(`Spoof score: ${spoofScore.toFixed(2)}`)
         
-        if (nextIndex >= challengesRef.current.length) {
-          // All challenges complete
-          captureSelfie()
-          verifyLiveness()
+        if (spoofScore >= THRESHOLDS.MIN_SPOOF_SCORE) {
+          // Capture selfie
+          if (videoRef.current && canvasRef.current) {
+            const ctx = canvasRef.current.getContext('2d')
+            if (ctx) {
+              canvasRef.current.width = videoRef.current.videoWidth
+              canvasRef.current.height = videoRef.current.videoHeight
+              ctx.drawImage(videoRef.current, 0, 0)
+              selfieDataRef.current = canvasRef.current.toDataURL('image/jpeg', 0.8)
+            }
+          }
+          setStep('complete')
+          setInstruction('✓ Verification complete!')
+          submitResult(spoofScore)
         } else {
-          setChallengeIndex(nextIndex)
-          setProgress(0)
+          setStep('failed')
+          setInstruction(`Verification failed. Score: ${spoofScore.toFixed(2)} (need ${THRESHOLDS.MIN_SPOOF_SCORE})`)
+        }
+        return
+      }
+      
+      const challenge = challenges[currentIdx]
+      const passed = challenge.check(landmarks, baselineRef.current)
+      
+      setDebugInfo(`Challenge: ${challenge.id}, Hold: ${holdFramesRef.current}/${THRESHOLDS.HOLD_FRAMES}`)
+      
+      if (passed) {
+        holdFramesRef.current++
+        setInstruction(`${challenge.icon} ${challenge.name} - Hold... (${holdFramesRef.current}/${THRESHOLDS.HOLD_FRAMES})`)
+        
+        if (holdFramesRef.current >= THRESHOLDS.HOLD_FRAMES) {
+          // Challenge complete
+          completedRef.current.push(challenge.id)
+          
+          // Track in spoof data
+          if (challenge.id === 'blink') spoofDataRef.current.blinkDetected = true
+          if (challenge.id === 'smile') spoofDataRef.current.smileDetected = true
+          if (challenge.id === 'turn') spoofDataRef.current.turnDetected = true
+          
+          // Move to next challenge
+          currentChallengeRef.current++
+          holdFramesRef.current = 0
+          
+          setProgress((currentChallengeRef.current / challenges.length) * 100)
+          
+          if (currentChallengeRef.current < challenges.length) {
+            const next = challenges[currentChallengeRef.current]
+            setInstruction(`${next.icon} ${next.name}`)
+          }
+        }
+      } else {
+        // Reset hold if challenge not met
+        if (holdFramesRef.current > 0) {
+          holdFramesRef.current = Math.max(0, holdFramesRef.current - 1)
         }
       }
-    } else {
-      // Decay hold frames
-      holdFramesRef.current = Math.max(0, holdFramesRef.current - 2)
-      setProgress((holdFramesRef.current / HOLD_REQUIRED) * 100)
     }
-  }, [])
+  }, [step, calculateSpoofScore])
 
-  // Capture selfie from video
-  const captureSelfie = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return
-    
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    
-    canvas.width = 640
-    canvas.height = 480
-    ctx.drawImage(videoRef.current, 0, 0, 640, 480)
-    selfieRef.current = canvas.toDataURL('image/jpeg', 0.8)
-  }, [])
-
-  // Verify liveness with backend
-  const verifyLiveness = useCallback(async () => {
-    setStep('verifying')
-    setInstruction('Verifying...')
-
-    const spoofScore = spoofScoreRef.current
-
-    // Check minimum spoof score
-    if (spoofScore < MIN_SPOOF_SCORE) {
-      setError(`Liveness check failed. Please try again with better lighting. (Score: ${spoofScore.toFixed(2)})`)
-
-      setStep('failed')
-      return
-    }
-
+  // Submit liveness result to backend
+  const submitResult = async (spoofScore: number) => {
     try {
-      const res = await fetch(`${API_URL}/api/verification/${verificationId}/liveness`, {
+      const response = await fetch(`${API_URL}/api/verify/liveness`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          selfie: selfieRef.current,
+          verificationId,
           livenessScore: spoofScore,
-          challengesCompleted: challengesRef.current,
-          antiSpoofScore: spoofScore
+          selfieBase64: selfieDataRef.current,
+          completedChallenges: completedRef.current,
+          timestamp: new Date().toISOString()
         })
       })
 
-      if (res.ok) {
-        setStep('success')
-        setTimeout(() => onNext(), 1500)
-      } else {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || 'Verification failed')
+      if (!response.ok) {
+        throw new Error('Failed to submit liveness result')
       }
+
+      setTimeout(() => onNext(), 1500)
     } catch (err) {
-      setError((err as Error).message || 'Failed to verify')
-      setStep('failed')
+      console.error('Submit error:', err)
+      setError('Failed to save result. Please try again.')
     }
-  }, [verificationId, onNext])
-
-  // Initialize MediaPipe
-  const initMediaPipe = useCallback(async () => {
-    setStep('loading')
-    setInstruction('Loading face detection...')
+  }
     
-    try {
-      const FaceMesh = window.FaceMesh
-      const Camera = window.Camera
-      
-      if (!FaceMesh || !Camera) {
-        throw new Error('MediaPipe not loaded. Please refresh the page.')
-      }
+    // Reset state
+    challengesRef.current = shuffle(createChallenges())
+    currentChallengeRef.current = 0
+    holdFramesRef.current = 0
+    completedRef.current = []
+    spoofDataRef.current = {
+      movements: [],
+      depthVariances: [],
+      blinkDetected: false,
+      smileDetected: false,
+      turnDetected: false
+    }
+    
+    setStep('checking')
+    setProgress(0)
+    setError('')
+    
+    const firstChallenge = challengesRef.current[0]
+    setInstruction(`${firstChallenge.icon} ${firstChallenge.name}`)
+  }, [faceDetected])
 
-      faceMeshRef.current = new FaceMesh({
-        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+  // Retry after failure
+  const retry = useCallback(() => {
+    setStep('ready')
+    setError('')
+    setProgress(0)
+    baselineRef.current = null
+    setInstruction('Position your face and tap Start')
+  }, [])
+
+  // Run MediaPipe detection loop
+  const runDetection = useCallback(async () => {
+    if (!videoRef.current || !faceMeshRef.current) return
+    
+    if (videoRef.current.readyState >= 2) {
+      await faceMeshRef.current.send({ image: videoRef.current })
+    }
+    
+    animationRef.current = requestAnimationFrame(runDetection)
+  }, [])
+
+  // Initialize MediaPipe FaceMesh
+  const initFaceMesh = useCallback(async () => {
+    try {
+      // Load MediaPipe script if not present
+      if (!window.FaceMesh) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement('script')
+          script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js'
+          script.onload = () => resolve()
+          script.onerror = () => reject(new Error('Failed to load MediaPipe'))
+          document.head.appendChild(script)
+        })
+      }
+      
+      // Create FaceMesh instance
+      const faceMesh = new window.FaceMesh({
+        locateFile: (file: string) => 
+          `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
       })
       
-      faceMeshRef.current.setOptions({
+      faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: true,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5
       })
       
-      faceMeshRef.current.onResults(onFaceResults)
+      faceMesh.onResults(processResults)
+      faceMeshRef.current = faceMesh
+      
+      return true
+    } catch (err) {
+      console.error('FaceMesh init error:', err)
+      return false
+    }
+  }, [processResults])
 
+  // Initialize camera
+  const initCamera = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    
+    try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: 640, height: 480 }
+        video: { 
+          facingMode: 'user', 
+          width: { ideal: 640 }, 
+          height: { ideal: 480 } 
+        }
       })
-
+      
+      streamRef.current = stream
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         await videoRef.current.play()
-
-        cameraRef.current = new Camera(videoRef.current, {
-          onFrame: async () => {
-            if (faceMeshRef.current && videoRef.current) {
-              await faceMeshRef.current.send({ image: videoRef.current })
-            }
-          },
-          width: 640,
-          height: 480
-        })
-        
-        await cameraRef.current.start()
-        setStep('ready')
-        setInstruction('Position your face in the oval')
       }
+      
+      // Initialize MediaPipe
+      const faceMeshReady = await initFaceMesh()
+      if (!faceMeshReady) {
+        throw new Error('Failed to initialize face detection')
+      }
+      
+      setCameraReady(true)
+      setStep('ready')
+      setInstruction('Position your face in the frame')
+      setLoading(false)
+      
+      // Start detection loop
+      runDetection()
     } catch (err) {
-      console.error('MediaPipe init error:', err)
-      if ((err as Error).name === 'NotAllowedError') {
+      setLoading(false)
+      const error = err as Error
+      
+      if (error.name === 'NotAllowedError') {
         setError('Camera access denied. Please allow camera in browser settings.')
+      } else if (error.name === 'NotFoundError') {
+        setError('No camera found. Please connect a camera.')
       } else {
-        setError((err as Error).message || 'Failed to initialize face detection')
+        setError(`Camera error: ${error.message}`)
       }
-      setStep('failed')
     }
-  }, [onFaceResults])
+  }, [initFaceMesh, runDetection])
 
-  // Start challenges
-  const startChallenges = useCallback(() => {
-    if (!faceValid) {
-      setError('Please position your face in the frame first')
-      return
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+      }
+      if (faceMeshRef.current) {
+        faceMeshRef.current.close()
+      }
     }
-    
-    // Reset state
-    holdFramesRef.current = 0
-    challengesRef.current = shuffle(['blink', 'smile', 'turnLeft', 'turnRight'])
-    metricsHistoryRef.current = []
-    baselineRef.current = null
-    spoofScoreRef.current = 0
-    
-    setChallengeIndex(0)
-    setProgress(0)
-    setStep('challenge')
-    setError('')
-  }, [faceValid])
-
-  // Retry after failure
-  const retry = useCallback(() => {
-    holdFramesRef.current = 0
-    challengesRef.current = shuffle(['blink', 'smile', 'turnLeft', 'turnRight'])
-    metricsHistoryRef.current = []
-    baselineRef.current = null
-    spoofScoreRef.current = 0
-    lastLandmarksRef.current = null
-    
-    setChallengeIndex(0)
-    setProgress(0)
-    setError('')
-    setStep('ready')
   }, [])
 
-  // Get instruction text for current challenge
-  const getInstruction = useCallback((): string => {
-    const challenge = challengesRef.current[challengeIndex]
-    switch (challenge) {
-      case 'blink': return '👁️ Blink your eyes'
-      case 'smile': return '😊 Smile widely'
-      case 'turnLeft': return '👈 Turn your head left'
-      case 'turnRight': return '👉 Turn your head right'
-      default: return 'Follow the instructions'
-    }
-  }, [challengeIndex])
-
-  // Initialize on mount
+  // Auto-init camera on mount
   useEffect(() => {
-    initMediaPipe()
-    
-    return () => {
-      if (cameraRef.current) {
-        cameraRef.current.stop()
-      }
-      if (videoRef.current?.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream
-        stream.getTracks().forEach(track => track.stop())
-      }
-    }
-  }, [initMediaPipe])
+    initCamera()
+  }, [initCamera])
 
   return (
-    <div className="space-y-4">
+    <div className="liveness-container" style={{ maxWidth: '500px', margin: '0 auto', padding: '20px' }}>
+      <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#1e3a5f' }}>
+        Liveness Verification
+      </h2>
+      
       {/* Video container */}
-      <div className="relative aspect-[4/3] bg-gray-900 rounded-2xl overflow-hidden">
-        <video
-          ref={videoRef}
-         className="w-full h-full object-cover scale-x-[-1]"
-          playsInline
+      <div style={{ 
+        position: 'relative', 
+        width: '100%', 
+        aspectRatio: '4/3',
+        backgroundColor: '#000',
+        borderRadius: '12px',
+        overflow: 'hidden',
+        marginBottom: '20px'
+      }}>
+        <video 
+          ref={videoRef} 
+          playsInline 
           muted
+          style={{ 
+            width: '100%', 
+            height: '100%', 
+            objectFit: 'cover',
+            transform: 'scaleX(-1)'
+          }} 
         />
-        <canvas ref={canvasRef} className="hidden" />
         
-        {/* Face guide oval */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className={`w-48 h-64 border-4 rounded-full transition-colors ${
-            faceValid ? 'border-green-500' : faceDetected ? 'border-yellow-500' : 'border-white/30'
-          }`} />
+        {/* Face guide overlay */}
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: '60%',
+          height: '75%',
+          border: `3px solid ${faceDetected ? '#22c55e' : '#ef4444'}`,
+          borderRadius: '50%',
+          pointerEvents: 'none',
+          transition: 'border-color 0.3s'
+        }} />
+        
+        {/* Status indicator */}
+        <div style={{
+          position: 'absolute',
+          top: '10px',
+          left: '10px',
+          padding: '6px 12px',
+          borderRadius: '20px',
+          backgroundColor: faceDetected ? '#22c55e' : '#ef4444',
+          color: 'white',
+          fontSize: '12px',
+          fontWeight: 'bold'
+        }}>
+          {faceDetected ? '✓ Face detected' : '✗ No face'}
         </div>
         
-        {/* Face status indicator */}
-        <div className="absolute top-3 left-3 px-3 py-1 rounded-full text-sm font-medium bg-black/50">
-          {faceValid ? (
-            <span className="text-green-400">✓ Face detected</span>
-          ) : faceDetected ? (
-            <span className="text-yellow-400">⚠ Adjust position</span>
-          ) : (
-            <span className="text-gray-400">Looking for face...</span>
-          )}
-        </div>
-
         {/* Loading overlay */}
-        {step === 'loading' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-900/90">
-            <div className="text-center">
-              <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-3" />
-              <p className="text-white text-sm">{instruction}</p>
+        {loading && (
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            color: 'white'
+          }}>
+            <div style={{ textAlign: 'center' }}>
+              <div className="spinner" style={{
+                width: '40px',
+                height: '40px',
+                border: '3px solid #fff',
+                borderTop: '3px solid transparent',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite',
+                margin: '0 auto 10px'
+              }} />
+              <p>Initializing camera...</p>
             </div>
           </div>
         )}
-
-        {/* Error overlay */}
-        {error && (
-          <div className="absolute bottom-3 left-3 right-3 bg-red-500/90 text-white text-sm p-3 rounded-xl">
-            {error}
-          </div>
-        )}
-
+        
         {/* Success overlay */}
-        {step === 'success' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-green-500/90">
-            <div className="text-center text-white">
-              <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-3">
-                <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <p className="text-lg font-bold">Verified!</p>
-            </div>
-          </div>
-        )}
-
-        {/* Verifying overlay */}
-        {step === 'verifying' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-900/90">
-            <div className="text-center">
-              <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-3" />
-              <p className="text-white">Verifying...</p>
-            </div>
+        {step === 'complete' && (
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(34, 197, 94, 0.9)'
+          }}>
+            <div style={{ 
+              fontSize: '80px', 
+              color: 'white',
+              animation: 'scaleIn 0.3s ease-out'
+            }}>✓</div>
           </div>
         )}
       </div>
-
-      {/* Challenge UI */}
-      {step === 'challenge' && (
-        <div className="space-y-3">
-          {/* Challenge indicators */}
-          <div className="flex justify-center gap-2">
-            {challengesRef.current.map((_, i) => (
-              <div
-                key={i}
-                className={`w-3 h-3 rounded-full transition-colors ${
-                  i < challengeIndex ? 'bg-green-500' : i === challengeIndex ? 'bg-blue-500' : 'bg-gray-600'
-                }`}
-              />
-            ))}
-          </div>
-          
-          {/* Current challenge instruction */}
-          <p className="text-center text-xl font-bold text-white">{getInstruction()}</p>
-          
-          {/* Progress bar */}
-          <div className="w-full bg-gray-700 rounded-full h-2.5">
-            <div
-              className="bg-blue-500 h-2.5 rounded-full transition-all duration-100"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          
-          <p className="text-center text-sm text-gray-400">
-            Challenge {challengeIndex + 1} of {challengesRef.current.length}
-          </p>
+      
+      {/* Hidden canvas for selfie capture */}
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
+      
+      {/* Progress bar */}
+      {step === 'checking' && (
+        <div style={{ 
+          width: '100%', 
+          height: '8px', 
+          backgroundColor: '#e5e7eb', 
+          borderRadius: '4px',
+          marginBottom: '15px',
+          overflow: 'hidden'
+        }}>
+          <div style={{
+            width: `${progress}%`,
+            height: '100%',
+            backgroundColor: '#22c55e',
+            transition: 'width 0.3s ease'
+          }} />
         </div>
       )}
-
-      {/* Ready state - start button */}
-      {step === 'ready' && (
-        <button
-          onClick={startChallenges}
-          disabled={!faceValid}
-          className={`w-full py-4 rounded-xl font-semibold text-lg transition-all ${
-            faceValid
-              ? 'bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]'
-              : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-          }`}
-        >
-          {faceValid ? 'Start Liveness Check' : 'Position your face in the oval'}
-        </button>
-      )}
-
-      {/* Failed state - retry button */}
-      {step === 'failed' && (
-        <button
-          onClick={retry}
-          className="w-full py-4 rounded-xl font-semibold text-lg bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98] transition-all"
-        >
-          Try Again
-        </button>
-      )}
-
-      {/* Anti-spoofing notice */}
-      <p className="text-xs text-center text-gray-500">
-        🔒 Anti-spoofing active • Photos and videos will be rejected
+      
+      {/* Instruction text */}
+      <p style={{ 
+        textAlign: 'center', 
+        fontSize: '18px', 
+        fontWeight: '500',
+        marginBottom: '15px',
+        minHeight: '27px'
+      }}>
+        {instruction}
       </p>
+      
+      {/* Error message */}
+      {error && (
+        <div style={{
+          padding: '12px',
+          backgroundColor: '#fee2e2',
+          color: '#dc2626',
+          borderRadius: '8px',
+          marginBottom: '15px',
+          textAlign: 'center'
+        }}>
+          {error}
+        </div>
+      )}
+      
+      {/* Debug info (remove in production) */}
+      {import.meta.env.DEV && debugInfo && (
+        <p style={{ 
+          fontSize: '12px', 
+          color: '#666', 
+          textAlign: 'center',
+          marginBottom: '15px'
+        }}>
+          Debug: {debugInfo}
+        </p>
+      )}
+      
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+        {step === 'ready' && (
+          <button
+            onClick={startCheck}
+            disabled={!faceDetected}
+            style={{
+              padding: '14px 32px',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              color: 'white',
+              backgroundColor: faceDetected ? '#1e3a5f' : '#9ca3af',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: faceDetected ? 'pointer' : 'not-allowed',
+              transition: 'background-color 0.2s'
+            }}
+          >
+            Start Liveness Check
+          </button>
+        )}
+        
+        {step === 'failed' && (
+          <button
+            onClick={retry}
+            style={{
+              padding: '14px 32px',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              color: 'white',
+              backgroundColor: '#dc2626',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer'
+            }}
+          >
+            Try Again
+          </button>
+        )}
+      </div>
+      
+      {/* Security note */}
+      <p style={{ 
+        textAlign: 'center', 
+        fontSize: '12px', 
+        color: '#6b7280',
+        marginTop: '20px'
+      }}>
+        🔒 Anti-spoofing protection active
+      </p>
+      
+      {/* CSS keyframes */}
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes scaleIn {
+          from { transform: scale(0); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+      `}</style>
     </div>
   )
 }
