@@ -1,11 +1,31 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://identis-production.up.railway.app'
+
+// CDN URLs for face-api.js (vladmandic's maintained fork)
+const FACE_API_CDN = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.min.js'
+const MODELS_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model'
 
 interface Props {
   verificationId: string
   onNext: () => void
+}
+
+// Eye landmark indices for face-api.js 68-point model
+const LEFT_EYE = [36, 37, 38, 39, 40, 41]  // 6 points around left eye
+const RIGHT_EYE = [42, 43, 44, 45, 46, 47] // 6 points around right eye
+const NOSE_TIP = 30
+const LEFT_FACE = 0   // leftmost point of face
+const RIGHT_FACE = 16 // rightmost point of face
+
+// Calculate Eye Aspect Ratio (EAR)
+function calculateEAR(eyePoints: { x: number, y: number }[]): number {
+  // Vertical distances
+  const v1 = Math.hypot(eyePoints[1].x - eyePoints[5].x, eyePoints[1].y - eyePoints[5].y)
+  const v2 = Math.hypot(eyePoints[2].x - eyePoints[4].x, eyePoints[2].y - eyePoints[4].y)
+  // Horizontal distance
+  const h = Math.hypot(eyePoints[0].x - eyePoints[3].x, eyePoints[0].y - eyePoints[3].y)
+  return (v1 + v2) / (2.0 * h)
 }
 
 export default function LivenessStep({ verificationId, onNext }: Props) {
@@ -20,19 +40,16 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const landmarkerRef = useRef<FaceLandmarker | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const animRef = useRef(0)
+  const faceapiRef = useRef<any>(null)
   const holdCount = useRef(0)
   const stableCount = useRef(0)
-  const lastTimestamp = useRef(0)
+  const blinkDetected = useRef(false)
+  const earHistory = useRef<number[]>([])
 
   // Challenges: blink, turn left, turn right
-  const challenges = [
-    { id: 'blink', text: 'Blink your eyes', check: (b: any) => b?.eyeBlinkLeft > 0.4 && b?.eyeBlinkRight > 0.4 },
-    { id: 'left', text: 'Turn head LEFT', check: (_b: any, yaw: number) => yaw > 15 },
-    { id: 'right', text: 'Turn head RIGHT', check: (_b: any, yaw: number) => yaw < -15 },
-  ]
+  const challenges = ['blink', 'left', 'right']
 
   const submit = useCallback(async (selfie: string) => {
     try {
@@ -62,6 +79,8 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
   const nextStep = useCallback(() => {
     holdCount.current = 0
+    blinkDetected.current = false
+    earHistory.current = []
     setProgress(0)
     if (step >= challenges.length - 1) {
       streamRef.current?.getTracks().forEach(t => t.stop())
@@ -74,61 +93,49 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
   const detect = useCallback(async () => {
     const video = videoRef.current
-    const landmarker = landmarkerRef.current
-    if (!video || !landmarker || video.readyState < 2 || phase === 'done') {
+    const faceapi = faceapiRef.current
+    if (!video || !faceapi || video.readyState < 2 || phase === 'done') {
       animRef.current = requestAnimationFrame(detect)
       return
     }
-
-    const now = performance.now()
-    if (now - lastTimestamp.current < 50) { // Limit to ~20fps
-      animRef.current = requestAnimationFrame(detect)
-      return
-    }
-    lastTimestamp.current = now
 
     try {
-      const result = landmarker.detectForVideo(video, now)
-      
-      if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
+      const detection = await faceapi
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
+        .withFaceLandmarks()
+
+      if (!detection) {
         setFaceOk(false)
         stableCount.current = 0
-        setDebug('No face')
+        setDebug('No face detected')
         animRef.current = requestAnimationFrame(detect)
         return
       }
 
-      // Get blendshapes (includes eyeBlinkLeft, eyeBlinkRight, etc)
-      const blendshapes = result.faceBlendshapes?.[0]?.categories
-      const blendMap: Record<string, number> = {}
-      blendshapes?.forEach((b: any) => { blendMap[b.categoryName] = b.score })
-
-      // Get face transformation matrix for head pose
-      const matrix = result.facialTransformationMatrixes?.[0]?.data
-      let yaw = 0
-      if (matrix) {
-        // Extract yaw from rotation matrix (simplified)
-        yaw = Math.atan2(matrix[8], matrix[0]) * (180 / Math.PI)
-      }
-
-      // Check face bounds (is face in frame)
-      const landmarks = result.faceLandmarks[0]
-      const xs = landmarks.map((l: any) => l.x)
-      const ys = landmarks.map((l: any) => l.y)
-      const minX = Math.min(...xs), maxX = Math.max(...xs)
-      const minY = Math.min(...ys), maxY = Math.max(...ys)
-      const faceW = maxX - minX
-      const faceH = maxY - minY
-      const centerX = (minX + maxX) / 2
-      const centerY = (minY + maxY) / 2
-
+      const landmarks = detection.landmarks.positions
+      const box = detection.detection.box
+      
+      // Check face size (should be 20-70% of video width)
+      const faceW = box.width / video.videoWidth
       const goodSize = faceW > 0.2 && faceW < 0.7
-      const centered = centerX > 0.3 && centerX < 0.7 && centerY > 0.2 && centerY < 0.8
 
-      const blink = blendMap.eyeBlinkLeft ?? 0
-      setDebug(`Blink:${blink.toFixed(2)} Yaw:${yaw.toFixed(0)}° Size:${(faceW*100).toFixed(0)}%`)
+      // Calculate EAR for both eyes
+      const leftEyePoints = LEFT_EYE.map(i => landmarks[i])
+      const rightEyePoints = RIGHT_EYE.map(i => landmarks[i])
+      const leftEAR = calculateEAR(leftEyePoints)
+      const rightEAR = calculateEAR(rightEyePoints)
+      const avgEAR = (leftEAR + rightEAR) / 2
 
-      if (goodSize && centered) {
+      // Calculate head yaw (horizontal rotation)
+      const nose = landmarks[NOSE_TIP]
+      const leftFace = landmarks[LEFT_FACE]
+      const rightFace = landmarks[RIGHT_FACE]
+      const faceWidth = rightFace.x - leftFace.x
+      const noseOffset = ((nose.x - leftFace.x) / faceWidth - 0.5) * 2 // -1 to 1
+
+      setDebug(`EAR:${avgEAR.toFixed(2)} Yaw:${(noseOffset * 45).toFixed(0)}° Size:${(faceW * 100).toFixed(0)}%`)
+
+      if (goodSize) {
         stableCount.current++
         if (stableCount.current > 5) setFaceOk(true)
       } else {
@@ -140,8 +147,6 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       if (phase === 'ready') {
         if (!goodSize) {
           setInstruction(faceW < 0.2 ? 'Move closer' : 'Move back')
-        } else if (!centered) {
-          setInstruction('Center your face')
         } else if (faceOk) {
           setInstruction('Perfect! Tap Start')
         } else {
@@ -152,20 +157,51 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       // CHALLENGE PHASE
       if (phase === 'challenge') {
         const current = challenges[step]
-        const passed = current.check(blendMap, yaw)
-        
-        setInstruction(passed ? 'Hold it...' : current.text)
-        
-        if (passed) {
-          holdCount.current++
-          const required = current.id === 'blink' ? 3 : 10
-          setProgress((holdCount.current / required) * 100)
-          if (holdCount.current >= required) {
-            nextStep()
+
+        if (current === 'blink') {
+          // Track EAR history for blink detection
+          earHistory.current.push(avgEAR)
+          if (earHistory.current.length > 20) earHistory.current.shift()
+
+          if (earHistory.current.length >= 10) {
+            const minEAR = Math.min(...earHistory.current)
+            const maxEAR = Math.max(...earHistory.current)
+            // Blink detected: EAR drops below 0.15 then rises above 0.2
+            if (minEAR < 0.15 && maxEAR > 0.2 && !blinkDetected.current) {
+              blinkDetected.current = true
+              setProgress(100)
+              setTimeout(nextStep, 500)
+            }
           }
-        } else {
-          holdCount.current = Math.max(0, holdCount.current - 0.5)
-          setProgress((holdCount.current / 10) * 100)
+          setInstruction(blinkDetected.current ? 'Blink detected!' : 'Blink your eyes')
+        }
+
+        else if (current === 'left') {
+          // Head turned left means nose appears to right of center (from camera POV, mirrored)
+          const passed = noseOffset > 0.2
+          setInstruction(passed ? 'Hold it...' : 'Turn head LEFT')
+          if (passed) {
+            holdCount.current++
+            setProgress((holdCount.current / 15) * 100)
+            if (holdCount.current >= 15) nextStep()
+          } else {
+            holdCount.current = Math.max(0, holdCount.current - 1)
+            setProgress((holdCount.current / 15) * 100)
+          }
+        }
+
+        else if (current === 'right') {
+          // Head turned right means nose appears to left of center
+          const passed = noseOffset < -0.2
+          setInstruction(passed ? 'Hold it...' : 'Turn head RIGHT')
+          if (passed) {
+            holdCount.current++
+            setProgress((holdCount.current / 15) * 100)
+            if (holdCount.current >= 15) nextStep()
+          } else {
+            holdCount.current = Math.max(0, holdCount.current - 1)
+            setProgress((holdCount.current / 15) * 100)
+          }
         }
       }
 
@@ -181,34 +217,42 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     setStep(0)
     setProgress(0)
     holdCount.current = 0
+    blinkDetected.current = false
+    earHistory.current = []
     setPhase('challenge')
-    setInstruction(challenges[0].text)
+    setInstruction(challenges[0] === 'blink' ? 'Blink your eyes' : challenges[0])
   }, [faceOk, challenges])
 
   useEffect(() => {
     let mounted = true
 
+    const loadScript = (src: string): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        if ((window as any).faceapi) {
+          resolve()
+          return
+        }
+        const script = document.createElement('script')
+        script.src = src
+        script.onload = () => resolve()
+        script.onerror = reject
+        document.head.appendChild(script)
+      })
+    }
+
     const init = async () => {
       try {
-        setLoadingText('Loading AI...')
-        const filesetResolver = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-        )
+        setLoadingText('Loading AI (~270KB)...')
+        await loadScript(FACE_API_CDN)
         if (!mounted) return
+        
+        const faceapi = (window as any).faceapi
+        faceapiRef.current = faceapi
 
         setLoadingText('Loading face model...')
-        const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-            delegate: 'GPU'
-          },
-          outputFaceBlendshapes: true,
-          outputFacialTransformationMatrixes: true,
-          runningMode: 'VIDEO',
-          numFaces: 1
-        })
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URL)
+        await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODELS_URL)
         if (!mounted) return
-        landmarkerRef.current = landmarker
 
         setLoadingText('Starting camera...')
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -237,7 +281,6 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       mounted = false
       cancelAnimationFrame(animRef.current)
       streamRef.current?.getTracks().forEach(t => t.stop())
-      landmarkerRef.current?.close()
     }
   }, [detect])
 
