@@ -10,6 +10,7 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@vladmandic/face-api": "^1.7.15",
     "express": "^4.21.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
