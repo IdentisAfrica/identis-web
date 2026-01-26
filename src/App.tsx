@@ -1,8 +1,10 @@
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { useState } from 'react'
 import LandingPage from './components/LandingPage'
 import VerificationFlow from './components/VerificationFlow'
+import CertificateView from './components/CertificateView'
 
-function App() {
+function Home() {
   const [showVerification, setShowVerification] = useState(false)
 
   if (showVerification) {
@@ -10,6 +12,17 @@ function App() {
   }
 
   return <LandingPage onStartVerification={() => setShowVerification(true)} />
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/certificate/:id" element={<CertificateView />} />
+      </Routes>
+    </BrowserRouter>
+  )
 }
 
 export default App
