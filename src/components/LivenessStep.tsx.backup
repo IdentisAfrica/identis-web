@@ -462,13 +462,24 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   // Submit liveness result to backend
   const submitResult = async (spoofScore: number) => {
     try {
-      const response = await fetch(`${API_URL}/api/verification/${verificationId}/liveness`, {
+
+fetch(`${API_URL}/api/verify/liveness`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          passed: true,
-          spoofScore,
-          selfieData: selfieDataRef.current,
+          verificationId,
+          livenessScore: spoofScore,
+          selfieBase64: selfieDataRef.current,
+          completedChallenges: completedRef.current,
+          timestamp: new Date().toISOString()      const response = await 
+
+fetch(`${API_URL}/api/verify/liveness`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          verificationId,
+          livenessScore: spoofScore,
+          selfieBase64: selfieDataRef.current,
           completedChallenges: completedRef.current,
           timestamp: new Date().toISOString()
         })
