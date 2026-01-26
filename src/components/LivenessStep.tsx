@@ -326,7 +326,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
         switch (challenge.type) {
           case 'blink':
             // Blink detection state machine
-            const EAR_THRESHOLD = 0.22
+            const EAR_THRESHOLD = 0.28
             const wasOpen = lastEAR.current > EAR_THRESHOLD
             const isNowClosed = avgEAR < EAR_THRESHOLD
             
