@@ -179,7 +179,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
           const min = Math.min(...earHistory.current)
           const max = Math.max(...earHistory.current)
           
-          if (min < 0.08 && max > 0.12 && !blinkDetected.current) {
+          if (ear < 0.08 && !blinkDetected.current) {
             blinkDetected.current = true
             holdCount.current = 10 // instant pass
           }
