@@ -9,7 +9,6 @@ interface Props {
   onNext: () => void
 }
 
-// 68-point landmark indices
 const LEFT_EYE = [36, 37, 38, 39, 40, 41]
 const RIGHT_EYE = [42, 43, 44, 45, 46, 47]
 const NOSE_TIP = 30
@@ -24,7 +23,6 @@ function calculateEAR(eyePoints: faceapi.Point[]): number {
   return (v1 + v2) / (2.0 * h)
 }
 
-// Shuffle array (randomize challenge order)
 function shuffle<T>(array: T[]): T[] {
   const arr = [...array]
   for (let i = arr.length - 1; i > 0; i--) {
@@ -44,6 +42,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const [step, setStep] = useState(0)
   const [progress, setProgress] = useState(0)
   const [debug, setDebug] = useState('')
+  const [challengeDisplay, setChallengeDisplay] = useState('')
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -52,18 +51,17 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const phaseRef = useRef(phase)
   const stepRef = useRef(step)
   
-  // Tracking
+  // Use ref for challenges so it's immediately available
+  const challengesRef = useRef<string[]>(['blink', 'left', 'right'])
+  
   const stableCount = useRef(0)
   const challengeComplete = useRef(false)
   const holdFrames = useRef(0)
   
-  // Anti-spoofing: track timing
+  // Anti-spoofing
   const challengeStartTime = useRef(0)
   const actionTimes = useRef<number[]>([])
-  
-  // Anti-spoofing: track face consistency
   const facePositions = useRef<{x: number, y: number}[]>([])
-  const faceSizes = useRef<number[]>([])
   
   // Blink detection
   const earValues = useRef<number[]>([])
@@ -71,75 +69,35 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const blinkCount = useRef(0)
   
   // Head turn
-  const yawValues = useRef<number[]>([])
-  const baselineYaw = useRef(0)
-  
-  // Randomized challenges
-  const [challenges, setChallenges] = useState<string[]>([])
+  const yawBaseline = useRef<number | null>(null)
+  const yawCalibrationFrames = useRef(0)
 
   useEffect(() => { phaseRef.current = phase }, [phase])
   useEffect(() => { stepRef.current = step }, [step])
 
-  // Anti-spoofing check: natural micro-movements
   const hasNaturalMovement = (): boolean => {
-    if (facePositions.current.length < 20) return true // Not enough data
-    
-    // Calculate variance in face position
+    if (facePositions.current.length < 20) return true
     const positions = facePositions.current.slice(-20)
     const avgX = positions.reduce((a, b) => a + b.x, 0) / positions.length
     const avgY = positions.reduce((a, b) => a + b.y, 0) / positions.length
-    
     let variance = 0
     positions.forEach(p => {
       variance += Math.pow(p.x - avgX, 2) + Math.pow(p.y - avgY, 2)
     })
-    variance /= positions.length
-    
-    // Real faces have micro-movements (variance > 0.5)
-    // Photos are too stable (variance < 0.1)
-    return variance > 0.3
-  }
-  
-  // Anti-spoofing check: human reaction time (200-800ms is normal)
-  const hasHumanTiming = (): boolean => {
-    if (actionTimes.current.length < 2) return true
-    
-    const avgReaction = actionTimes.current.reduce((a, b) => a + b, 0) / actionTimes.current.length
-    // Too fast (<150ms) = bot, too slow (>5000ms) = suspicious
-    return avgReaction > 150 && avgReaction < 5000
+    return (variance / positions.length) > 0.3
   }
 
   const submit = async (selfie: string) => {
-    // Final anti-spoofing validation
     const naturalMovement = hasNaturalMovement()
-    const humanTiming = hasHumanTiming()
-    
-    // Calculate liveness score based on checks
-    let livenessScore = 0.5 // Base score for completing challenges
-    if (naturalMovement) livenessScore += 0.25
-    if (humanTiming) livenessScore += 0.25
-    if (blinkCount.current >= 1) livenessScore += 0.1 // Bonus for confirmed blinks
-    
-    livenessScore = Math.min(1.0, livenessScore)
+    let livenessScore = 0.7
+    if (naturalMovement) livenessScore += 0.2
+    if (blinkCount.current >= 1) livenessScore += 0.1
     
     try {
       const res = await fetch(`${API_URL}/api/verify/liveness`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          verificationId, 
-          livenessScore,
-          selfieBase64: selfie,
-          // Include anti-spoofing metadata
-          metadata: {
-            naturalMovement,
-            humanTiming,
-            blinkCount: blinkCount.current,
-            avgReactionMs: actionTimes.current.length > 0 
-              ? actionTimes.current.reduce((a, b) => a + b, 0) / actionTimes.current.length 
-              : 0
-          }
-        })
+        body: JSON.stringify({ verificationId, livenessScore: Math.min(1.0, livenessScore), selfieBase64: selfie })
       })
       if (!res.ok) throw new Error('Failed')
       setPhase('done')
@@ -161,27 +119,35 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   }
 
   const nextStep = () => {
-    // Record timing for this challenge
     const elapsed = Date.now() - challengeStartTime.current
     actionTimes.current.push(elapsed)
     
-    // Reset tracking
     holdFrames.current = 0
     challengeComplete.current = false
     earValues.current = []
     blinkState.current = 'waiting'
-    yawValues.current = []
-    baselineYaw.current = 0
+    yawBaseline.current = null
+    yawCalibrationFrames.current = 0
     setProgress(0)
     
+    const challenges = challengesRef.current
     if (stepRef.current >= challenges.length - 1) {
       streamRef.current?.getTracks().forEach(t => t.stop())
       cancelAnimationFrame(animRef.current)
       submit(capture())
     } else {
-      setStep(s => s + 1)
+      const nextIdx = stepRef.current + 1
+      setStep(nextIdx)
+      stepRef.current = nextIdx
       challengeStartTime.current = Date.now()
+      updateChallengeDisplay(nextIdx)
     }
+  }
+
+  const updateChallengeDisplay = (idx: number) => {
+    const c = challengesRef.current[idx]
+    const names: Record<string, string> = { blink: 'Blink', left: 'Turn Left', right: 'Turn Right' }
+    setChallengeDisplay(`${idx + 1}/${challengesRef.current.length}: ${names[c] || c}`)
   }
 
   const detect = async () => {
@@ -209,22 +175,16 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       const faceW = box.width / video.videoWidth
       const goodSize = faceW > 0.2 && faceW < 0.7
 
-      // Track face position for anti-spoofing
-      const faceCenter = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
-      facePositions.current.push(faceCenter)
+      // Track position for anti-spoofing
+      facePositions.current.push({ x: box.x + box.width / 2, y: box.y + box.height / 2 })
       if (facePositions.current.length > 60) facePositions.current.shift()
-      
-      faceSizes.current.push(faceW)
-      if (faceSizes.current.length > 30) faceSizes.current.shift()
 
       // Calculate EAR
       const leftEyePoints = LEFT_EYE.map(i => landmarks[i])
       const rightEyePoints = RIGHT_EYE.map(i => landmarks[i])
-      const leftEAR = calculateEAR(leftEyePoints)
-      const rightEAR = calculateEAR(rightEyePoints)
-      const avgEAR = (leftEAR + rightEAR) / 2
+      const avgEAR = (calculateEAR(leftEyePoints) + calculateEAR(rightEyePoints)) / 2
 
-      // Calculate head yaw
+      // Calculate yaw
       const nose = landmarks[NOSE_TIP]
       const leftFace = landmarks[LEFT_FACE]
       const rightFace = landmarks[RIGHT_FACE]
@@ -232,7 +192,6 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       const noseRatio = (nose.x - leftFace.x) / faceWidth
       const yaw = (noseRatio - 0.5) * 90
 
-      // Update face status
       if (goodSize) {
         stableCount.current++
         if (stableCount.current > 5) {
@@ -246,8 +205,9 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
       const currentPhase = phaseRef.current
       const currentStep = stepRef.current
+      const challenges = challengesRef.current
 
-      // === READY PHASE ===
+      // READY PHASE
       if (currentPhase === 'ready') {
         setDebug(`EAR: ${avgEAR.toFixed(2)} | Yaw: ${yaw.toFixed(0)}°`)
         if (!goodSize) {
@@ -259,13 +219,11 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
         }
       }
 
-      // === CHALLENGE PHASE ===
-      if (currentPhase === 'challenge' && !challengeComplete.current && challenges.length > 0) {
+      // CHALLENGE PHASE
+      if (currentPhase === 'challenge' && !challengeComplete.current) {
         const current = challenges[currentStep]
 
-        // ==================
-        // BLINK DETECTION
-        // ==================
+        // BLINK
         if (current === 'blink') {
           earValues.current.push(avgEAR)
           if (earValues.current.length > 60) earValues.current.shift()
@@ -275,9 +233,9 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
             setInstruction('Look at camera...')
           } else {
             const baseline = earValues.current.slice(0, 8).reduce((a, b) => a + b, 0) / 8
-            const threshold = baseline * 0.70 // 30% drop = blink
+            const threshold = baseline * 0.70
             
-            setDebug(`EAR: ${avgEAR.toFixed(2)} | Base: ${baseline.toFixed(2)}`)
+            setDebug(`EAR: ${avgEAR.toFixed(2)} | Base: ${baseline.toFixed(2)} | ${blinkState.current}`)
             
             if (blinkState.current === 'waiting') {
               setInstruction('Blink your eyes!')
@@ -299,29 +257,24 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
           }
         }
 
-        // ==================
         // TURN LEFT
-        // ==================
         else if (current === 'left') {
-          // Establish baseline yaw
-          if (yawValues.current.length < 5) {
-            yawValues.current.push(yaw)
-            baselineYaw.current = yawValues.current.reduce((a, b) => a + b, 0) / yawValues.current.length
-            setDebug(`Calibrating yaw...`)
+          // Calibrate baseline
+          if (yawBaseline.current === null) {
+            yawCalibrationFrames.current++
+            if (yawCalibrationFrames.current >= 5) {
+              yawBaseline.current = yaw
+            }
+            setDebug(`Calibrating...`)
             setInstruction('Face forward...')
           } else {
-            // Need to turn 20° from baseline
-            const turnAmount = yaw - baselineYaw.current
-            setDebug(`Turn: ${turnAmount.toFixed(0)}° (need +20°)`)
+            const turnAmount = yaw - yawBaseline.current
+            setDebug(`Turn: ${turnAmount.toFixed(0)}° (need +18°)`)
             
-            const passed = turnAmount > 18
-            
-            if (passed) {
+            if (turnAmount > 18) {
               holdFrames.current++
-              const pct = Math.min(100, (holdFrames.current / 8) * 100)
-              setProgress(pct)
+              setProgress(Math.min(100, (holdFrames.current / 8) * 100))
               setInstruction('Hold...')
-              
               if (holdFrames.current >= 8) {
                 challengeComplete.current = true
                 setInstruction('Good! ✓')
@@ -335,27 +288,23 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
           }
         }
 
-        // ==================
         // TURN RIGHT
-        // ==================
         else if (current === 'right') {
-          if (yawValues.current.length < 5) {
-            yawValues.current.push(yaw)
-            baselineYaw.current = yawValues.current.reduce((a, b) => a + b, 0) / yawValues.current.length
-            setDebug(`Calibrating yaw...`)
+          if (yawBaseline.current === null) {
+            yawCalibrationFrames.current++
+            if (yawCalibrationFrames.current >= 5) {
+              yawBaseline.current = yaw
+            }
+            setDebug(`Calibrating...`)
             setInstruction('Face forward...')
           } else {
-            const turnAmount = yaw - baselineYaw.current
-            setDebug(`Turn: ${turnAmount.toFixed(0)}° (need -20°)`)
+            const turnAmount = yaw - yawBaseline.current
+            setDebug(`Turn: ${turnAmount.toFixed(0)}° (need -18°)`)
             
-            const passed = turnAmount < -18
-            
-            if (passed) {
+            if (turnAmount < -18) {
               holdFrames.current++
-              const pct = Math.min(100, (holdFrames.current / 8) * 100)
-              setProgress(pct)
+              setProgress(Math.min(100, (holdFrames.current / 8) * 100))
               setInstruction('Hold...')
-              
               if (holdFrames.current >= 8) {
                 challengeComplete.current = true
                 setInstruction('Good! ✓')
@@ -366,43 +315,6 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
               setProgress((holdFrames.current / 8) * 100)
               setInstruction('Turn head RIGHT →')
             }
-          }
-        }
-
-        // ==================
-        // SMILE (bonus challenge)
-        // ==================
-        else if (current === 'smile') {
-          // Use mouth landmarks to detect smile
-          const mouthLeft = landmarks[48]
-          const mouthRight = landmarks[54]
-          const mouthTop = landmarks[51]
-          const mouthBottom = landmarks[57]
-          
-          const mouthWidth = Math.hypot(mouthRight.x - mouthLeft.x, mouthRight.y - mouthLeft.y)
-          const mouthHeight = Math.hypot(mouthBottom.x - mouthTop.x, mouthBottom.y - mouthTop.y)
-          const mouthRatio = mouthWidth / (mouthHeight + 0.001)
-          
-          setDebug(`Mouth ratio: ${mouthRatio.toFixed(2)} (need >4)`)
-          
-          // Smile = wide mouth, ratio > 4
-          const isSmiling = mouthRatio > 3.5
-          
-          if (isSmiling) {
-            holdFrames.current++
-            const pct = Math.min(100, (holdFrames.current / 10) * 100)
-            setProgress(pct)
-            setInstruction('Hold that smile!')
-            
-            if (holdFrames.current >= 10) {
-              challengeComplete.current = true
-              setInstruction('Great smile! ✓')
-              setTimeout(nextStep, 300)
-            }
-          } else {
-            holdFrames.current = Math.max(0, holdFrames.current - 1)
-            setProgress((holdFrames.current / 10) * 100)
-            setInstruction('Smile! 😊')
           }
         }
       }
@@ -417,25 +329,26 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const start = () => {
     if (!readyToStart) return
     
-    // Randomize challenge order for anti-spoofing
+    // Randomize and store in ref
     const randomChallenges = shuffle(['blink', 'left', 'right'])
-    setChallenges(randomChallenges)
+    challengesRef.current = randomChallenges
     
-    // Reset everything
+    // Reset
     setStep(0)
+    stepRef.current = 0
     setProgress(0)
     holdFrames.current = 0
     challengeComplete.current = false
     earValues.current = []
     blinkState.current = 'waiting'
     blinkCount.current = 0
-    yawValues.current = []
-    baselineYaw.current = 0
+    yawBaseline.current = null
+    yawCalibrationFrames.current = 0
     facePositions.current = []
-    faceSizes.current = []
     actionTimes.current = []
     challengeStartTime.current = Date.now()
     
+    updateChallengeDisplay(0)
     setPhase('challenge')
     setInstruction('Get ready...')
   }
@@ -446,25 +359,17 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     const init = async () => {
       try {
         setLoadingText('Loading face models...')
-        
         await faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URL)
         await faceapi.nets.faceLandmark68Net.loadFromUri(MODELS_URL)
-        
         if (!mounted) return
 
         setLoadingText('Starting camera...')
-        
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
         })
-        
-        if (!mounted) { 
-          stream.getTracks().forEach(t => t.stop())
-          return 
-        }
+        if (!mounted) { stream.getTracks().forEach(t => t.stop()); return }
         
         streamRef.current = stream
-
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           await videoRef.current.play()
@@ -481,24 +386,12 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     }
 
     init()
-    
     return () => {
       mounted = false
       cancelAnimationFrame(animRef.current)
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
   }, [])
-
-  // Get display name for current challenge
-  const getChallengeDisplay = (c: string) => {
-    switch(c) {
-      case 'blink': return 'Blink'
-      case 'left': return 'Turn Left'
-      case 'right': return 'Turn Right'
-      case 'smile': return 'Smile'
-      default: return c
-    }
-  }
 
   return (
     <div className="max-w-md mx-auto p-4">
@@ -520,9 +413,9 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
           {faceOk ? '✓ Face OK' : '✗ No Face'}
         </div>
 
-        {phase === 'challenge' && challenges.length > 0 && (
+        {phase === 'challenge' && (
           <div className="absolute top-3 right-3 bg-blue-500 text-white px-3 py-1 rounded-full text-xs font-bold">
-            {step + 1}/{challenges.length}: {getChallengeDisplay(challenges[step])}
+            {challengeDisplay}
           </div>
         )}
 
@@ -543,10 +436,10 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
       <canvas ref={canvasRef} className="hidden" />
 
-      {phase === 'challenge' && challenges.length > 0 && (
+      {phase === 'challenge' && (
         <div className="mb-4">
           <div className="flex gap-1 mb-2">
-            {challenges.map((c, i) => (
+            {challengesRef.current.map((_, i) => (
               <div key={i} className={`flex-1 h-2 rounded ${
                 i < step ? 'bg-green-500' : i === step ? 'bg-blue-500' : 'bg-gray-700'
               }`} />
