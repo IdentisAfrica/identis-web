@@ -541,7 +541,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       if (!window.FaceMesh) {
         await new Promise<void>((resolve, reject) => {
           const script = document.createElement('script')
-          script.src = 'https://unpkg.com/@mediapipe/face_mesh/face_mesh.js'
+          script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js'
           script.onload = () => resolve()
           script.onerror = () => reject(new Error('Failed to load MediaPipe'))
           document.head.appendChild(script)
@@ -551,7 +551,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       // Create FaceMesh instance
       const faceMesh = new window.FaceMesh({
         locateFile: (file: string) => 
-          `https://unpkg.com/@mediapipe/face_mesh/${file}`
+          `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
       })
       
       faceMesh.setOptions({
