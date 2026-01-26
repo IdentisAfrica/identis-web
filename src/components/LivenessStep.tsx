@@ -9,16 +9,21 @@ interface Props {
   onNext: () => void
 }
 
+// 68-point landmark indices
 const LEFT_EYE = [36, 37, 38, 39, 40, 41]
 const RIGHT_EYE = [42, 43, 44, 45, 46, 47]
 const NOSE_TIP = 30
 const LEFT_FACE = 0
 const RIGHT_FACE = 16
 
+// Calculate Eye Aspect Ratio - higher = open, lower = closed
 function calculateEAR(eyePoints: faceapi.Point[]): number {
+  // Vertical distances (top to bottom of eye)
   const v1 = Math.hypot(eyePoints[1].x - eyePoints[5].x, eyePoints[1].y - eyePoints[5].y)
   const v2 = Math.hypot(eyePoints[2].x - eyePoints[4].x, eyePoints[2].y - eyePoints[4].y)
+  // Horizontal distance (corner to corner)
   const h = Math.hypot(eyePoints[0].x - eyePoints[3].x, eyePoints[0].y - eyePoints[3].y)
+  if (h === 0) return 0.3
   return (v1 + v2) / (2.0 * h)
 }
 
@@ -40,16 +45,17 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const phaseRef = useRef(phase)
   const stepRef = useRef(step)
   
-  // Challenge tracking
-  const holdCount = useRef(0)
+  // Tracking
   const stableCount = useRef(0)
   const challengeComplete = useRef(false)
+  const holdFrames = useRef(0)
   
-  // Blink detection
-  const earHistory = useRef<number[]>([])
-  const baselineEAR = useRef(0)
-  const sawBlink = useRef(false)
-  const eyesOpen = useRef(false)
+  // Blink detection - simple min/max tracking
+  const earValues = useRef<number[]>([])
+  const blinkState = useRef<'waiting' | 'closed' | 'done'>('waiting')
+  
+  // Head turn - track yaw values
+  const yawValues = useRef<number[]>([])
 
   const challenges = ['blink', 'left', 'right']
 
@@ -83,13 +89,12 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   }
 
   const nextStep = () => {
-    // Reset all tracking for next challenge
-    holdCount.current = 0
+    // Reset tracking
+    holdFrames.current = 0
     challengeComplete.current = false
-    earHistory.current = []
-    baselineEAR.current = 0
-    sawBlink.current = false
-    eyesOpen.current = false
+    earValues.current = []
+    blinkState.current = 'waiting'
+    yawValues.current = []
     setProgress(0)
     
     if (stepRef.current >= challenges.length - 1) {
@@ -116,7 +121,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       if (!detection) {
         setFaceOk(false)
         stableCount.current = 0
-        setDebug('No face detected')
+        setDebug('No face - look at camera')
         animRef.current = requestAnimationFrame(detect)
         return
       }
@@ -126,18 +131,23 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       const faceW = box.width / video.videoWidth
       const goodSize = faceW > 0.2 && faceW < 0.7
 
+      // Calculate EAR (Eye Aspect Ratio)
       const leftEyePoints = LEFT_EYE.map(i => landmarks[i])
       const rightEyePoints = RIGHT_EYE.map(i => landmarks[i])
       const leftEAR = calculateEAR(leftEyePoints)
       const rightEAR = calculateEAR(rightEyePoints)
       const avgEAR = (leftEAR + rightEAR) / 2
 
+      // Calculate head yaw (left/right rotation)
       const nose = landmarks[NOSE_TIP]
       const leftFace = landmarks[LEFT_FACE]
       const rightFace = landmarks[RIGHT_FACE]
       const faceWidth = rightFace.x - leftFace.x
-      const noseOffset = ((nose.x - leftFace.x) / faceWidth - 0.5) * 2
+      // noseRatio: 0.5 = centered, <0.5 = turned right, >0.5 = turned left
+      const noseRatio = (nose.x - leftFace.x) / faceWidth
+      const yaw = (noseRatio - 0.5) * 90 // Convert to approximate degrees
 
+      // Update face status
       if (goodSize) {
         stableCount.current++
         if (stableCount.current > 5) {
@@ -147,15 +157,14 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       } else {
         stableCount.current = 0
         setFaceOk(false)
-        // Don't reset readyToStart - once ready, stay ready
       }
 
       const currentPhase = phaseRef.current
       const currentStep = stepRef.current
 
-      // READY PHASE
+      // === READY PHASE ===
       if (currentPhase === 'ready') {
-        setDebug(`EAR:${avgEAR.toFixed(2)} Size:${(faceW * 100).toFixed(0)}%`)
+        setDebug(`EAR: ${avgEAR.toFixed(2)} | Yaw: ${yaw.toFixed(0)}°`)
         if (!goodSize) {
           setInstruction(faceW < 0.2 ? 'Move closer' : 'Move back')
         } else if (stableCount.current > 5) {
@@ -165,89 +174,110 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
         }
       }
 
-      // CHALLENGE PHASE
+      // === CHALLENGE PHASE ===
       if (currentPhase === 'challenge' && !challengeComplete.current) {
         const current = challenges[currentStep]
 
+        // ==================
+        // BLINK DETECTION
+        // ==================
         if (current === 'blink') {
-          // Build baseline from first 5 frames
-          if (earHistory.current.length < 5) {
-            earHistory.current.push(avgEAR)
-            setDebug(`Calibrating... ${earHistory.current.length}/5`)
-            setInstruction('Keep eyes open...')
+          earValues.current.push(avgEAR)
+          // Keep last 60 values (~2 seconds)
+          if (earValues.current.length > 60) earValues.current.shift()
+          
+          const recentEAR = earValues.current.slice(-10)
+          const currentEAR = avgEAR
+          
+          // Need at least 10 frames to start
+          if (earValues.current.length < 10) {
+            setDebug(`Starting... ${earValues.current.length}/10`)
+            setInstruction('Look at camera...')
           } else {
-            if (baselineEAR.current === 0) {
-              baselineEAR.current = earHistory.current.reduce((a, b) => a + b, 0) / 5
-            }
+            // Get baseline from earlier frames (when eyes should be open)
+            const baseline = earValues.current.slice(0, 10).reduce((a, b) => a + b, 0) / 10
+            const threshold = baseline * 0.75 // Eye closed = 25% drop
             
-            const dropThreshold = baselineEAR.current * 0.65 // 35% drop = blink
-            const isBlinking = avgEAR < dropThreshold
+            setDebug(`EAR: ${currentEAR.toFixed(2)} | Base: ${baseline.toFixed(2)} | State: ${blinkState.current}`)
             
-            setDebug(`EAR:${avgEAR.toFixed(2)} Base:${baselineEAR.current.toFixed(2)}`)
-            
-            if (isBlinking && !sawBlink.current) {
-              sawBlink.current = true
-              setProgress(50)
-              setInstruction('Good! Now open...')
-            }
-            
-            if (sawBlink.current && !isBlinking) {
-              eyesOpen.current = true
-            }
-            
-            if (sawBlink.current && eyesOpen.current) {
-              challengeComplete.current = true
-              setProgress(100)
-              setInstruction('Blink detected!')
-              setTimeout(nextStep, 300)
-            } else if (!sawBlink.current) {
-              setInstruction('Blink now!')
+            if (blinkState.current === 'waiting') {
+              setInstruction('Blink your eyes!')
+              // Detect eye closure
+              if (currentEAR < threshold) {
+                blinkState.current = 'closed'
+                setProgress(50)
+              }
+            } else if (blinkState.current === 'closed') {
+              setInstruction('Now open!')
+              // Detect eye opening back up
+              if (currentEAR > baseline * 0.85) {
+                blinkState.current = 'done'
+                challengeComplete.current = true
+                setProgress(100)
+                setInstruction('Blink detected! ✓')
+                setTimeout(nextStep, 400)
+              }
             }
           }
         }
 
+        // ==================
+        // TURN LEFT
+        // ==================
         else if (current === 'left') {
-          // Need nose to be RIGHT of center (from user's perspective turning left)
-          const yawDegrees = noseOffset * 45
-          setDebug(`Yaw: ${yawDegrees.toFixed(0)}° (turn left)`)
+          yawValues.current.push(yaw)
+          if (yawValues.current.length > 30) yawValues.current.shift()
           
-          const passed = noseOffset > 0.25 // ~11 degrees
+          setDebug(`Yaw: ${yaw.toFixed(0)}° (need >15°)`)
           
-          if (passed) {
-            holdCount.current++
-            setProgress((holdCount.current / 8) * 100)
+          // User turns their head left = nose moves right in mirrored video = positive yaw
+          const turnedLeft = yaw > 15
+          
+          if (turnedLeft) {
+            holdFrames.current++
+            const pct = Math.min(100, (holdFrames.current / 10) * 100)
+            setProgress(pct)
             setInstruction('Hold...')
-            if (holdCount.current >= 8) {
+            
+            if (holdFrames.current >= 10) {
               challengeComplete.current = true
-              setInstruction('Good!')
-              setTimeout(nextStep, 300)
+              setInstruction('Good! ✓')
+              setTimeout(nextStep, 400)
             }
           } else {
-            holdCount.current = Math.max(0, holdCount.current - 2)
-            setProgress((holdCount.current / 8) * 100)
-            setInstruction('Turn head LEFT')
+            holdFrames.current = Math.max(0, holdFrames.current - 1)
+            setProgress((holdFrames.current / 10) * 100)
+            setInstruction('Turn head LEFT ←')
           }
         }
 
+        // ==================
+        // TURN RIGHT
+        // ==================
         else if (current === 'right') {
-          const yawDegrees = noseOffset * 45
-          setDebug(`Yaw: ${yawDegrees.toFixed(0)}° (turn right)`)
+          yawValues.current.push(yaw)
+          if (yawValues.current.length > 30) yawValues.current.shift()
           
-          const passed = noseOffset < -0.25 // ~-11 degrees
+          setDebug(`Yaw: ${yaw.toFixed(0)}° (need <-15°)`)
           
-          if (passed) {
-            holdCount.current++
-            setProgress((holdCount.current / 8) * 100)
+          // User turns head right = nose moves left in mirrored video = negative yaw
+          const turnedRight = yaw < -15
+          
+          if (turnedRight) {
+            holdFrames.current++
+            const pct = Math.min(100, (holdFrames.current / 10) * 100)
+            setProgress(pct)
             setInstruction('Hold...')
-            if (holdCount.current >= 8) {
+            
+            if (holdFrames.current >= 10) {
               challengeComplete.current = true
-              setInstruction('Good!')
-              setTimeout(nextStep, 300)
+              setInstruction('Good! ✓')
+              setTimeout(nextStep, 400)
             }
           } else {
-            holdCount.current = Math.max(0, holdCount.current - 2)
-            setProgress((holdCount.current / 8) * 100)
-            setInstruction('Turn head RIGHT')
+            holdFrames.current = Math.max(0, holdFrames.current - 1)
+            setProgress((holdFrames.current / 10) * 100)
+            setInstruction('Turn head RIGHT →')
           }
         }
       }
@@ -261,16 +291,16 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
   const start = () => {
     if (!readyToStart) return
+    // Reset everything
     setStep(0)
     setProgress(0)
-    holdCount.current = 0
+    holdFrames.current = 0
     challengeComplete.current = false
-    earHistory.current = []
-    baselineEAR.current = 0
-    sawBlink.current = false
-    eyesOpen.current = false
+    earValues.current = []
+    blinkState.current = 'waiting'
+    yawValues.current = []
     setPhase('challenge')
-    setInstruction('Keep eyes open...')
+    setInstruction('Look at camera...')
   }
 
   useEffect(() => {
