@@ -465,7 +465,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
         const model = await faceLandmarksDetection.createDetector(
           faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
           {
-            runtime: 'tfjs',
+            runtime: 'mediapipe', solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh',
             refineLandmarks: true,
             maxFaces: 1
           }
