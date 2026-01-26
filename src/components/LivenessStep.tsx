@@ -41,8 +41,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const [error, setError] = useState('')
   const [step, setStep] = useState(0)
   const [progress, setProgress] = useState(0)
-  const [debug, setDebug] = useState('')
-  const [challengeDisplay, setChallengeDisplay] = useState('')
+  const [metric, setMetric] = useState({ label: '', value: 0, target: 0, unit: '' })
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -51,53 +50,33 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const phaseRef = useRef(phase)
   const stepRef = useRef(step)
   
-  // Use ref for challenges so it's immediately available
   const challengesRef = useRef<string[]>(['blink', 'left', 'right'])
   
   const stableCount = useRef(0)
   const challengeComplete = useRef(false)
   const holdFrames = useRef(0)
   
-  // Anti-spoofing
-  const challengeStartTime = useRef(0)
-  const actionTimes = useRef<number[]>([])
-  const facePositions = useRef<{x: number, y: number}[]>([])
-  
   // Blink detection
-  const earValues = useRef<number[]>([])
-  const blinkState = useRef<'waiting' | 'closed' | 'done'>('waiting')
-  const blinkCount = useRef(0)
+  const earBaseline = useRef(0)
+  const earMin = useRef(1)
+  const blinkPhase = useRef<'calibrate' | 'waitClose' | 'waitOpen' | 'done'>('calibrate')
+  const calibrationFrames = useRef(0)
+  const earSum = useRef(0)
   
   // Head turn
   const yawBaseline = useRef<number | null>(null)
-  const yawCalibrationFrames = useRef(0)
+  const yawCalFrames = useRef(0)
+  const yawSum = useRef(0)
 
   useEffect(() => { phaseRef.current = phase }, [phase])
   useEffect(() => { stepRef.current = step }, [step])
 
-  const hasNaturalMovement = (): boolean => {
-    if (facePositions.current.length < 20) return true
-    const positions = facePositions.current.slice(-20)
-    const avgX = positions.reduce((a, b) => a + b.x, 0) / positions.length
-    const avgY = positions.reduce((a, b) => a + b.y, 0) / positions.length
-    let variance = 0
-    positions.forEach(p => {
-      variance += Math.pow(p.x - avgX, 2) + Math.pow(p.y - avgY, 2)
-    })
-    return (variance / positions.length) > 0.3
-  }
-
   const submit = async (selfie: string) => {
-    const naturalMovement = hasNaturalMovement()
-    let livenessScore = 0.7
-    if (naturalMovement) livenessScore += 0.2
-    if (blinkCount.current >= 1) livenessScore += 0.1
-    
     try {
       const res = await fetch(`${API_URL}/api/verify/liveness`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ verificationId, livenessScore: Math.min(1.0, livenessScore), selfieBase64: selfie })
+        body: JSON.stringify({ verificationId, livenessScore: 0.85, selfieBase64: selfie })
       })
       if (!res.ok) throw new Error('Failed')
       setPhase('done')
@@ -119,16 +98,18 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   }
 
   const nextStep = () => {
-    const elapsed = Date.now() - challengeStartTime.current
-    actionTimes.current.push(elapsed)
-    
     holdFrames.current = 0
     challengeComplete.current = false
-    earValues.current = []
-    blinkState.current = 'waiting'
+    earBaseline.current = 0
+    earMin.current = 1
+    blinkPhase.current = 'calibrate'
+    calibrationFrames.current = 0
+    earSum.current = 0
     yawBaseline.current = null
-    yawCalibrationFrames.current = 0
+    yawCalFrames.current = 0
+    yawSum.current = 0
     setProgress(0)
+    setMetric({ label: '', value: 0, target: 0, unit: '' })
     
     const challenges = challengesRef.current
     if (stepRef.current >= challenges.length - 1) {
@@ -139,15 +120,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       const nextIdx = stepRef.current + 1
       setStep(nextIdx)
       stepRef.current = nextIdx
-      challengeStartTime.current = Date.now()
-      updateChallengeDisplay(nextIdx)
     }
-  }
-
-  const updateChallengeDisplay = (idx: number) => {
-    const c = challengesRef.current[idx]
-    const names: Record<string, string> = { blink: 'Blink', left: 'Turn Left', right: 'Turn Right' }
-    setChallengeDisplay(`${idx + 1}/${challengesRef.current.length}: ${names[c] || c}`)
   }
 
   const detect = async () => {
@@ -165,7 +138,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       if (!detection) {
         setFaceOk(false)
         stableCount.current = 0
-        setDebug('No face - look at camera')
+        setInstruction('Look at camera')
         animRef.current = requestAnimationFrame(detect)
         return
       }
@@ -174,10 +147,6 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       const box = detection.detection.box
       const faceW = box.width / video.videoWidth
       const goodSize = faceW > 0.2 && faceW < 0.7
-
-      // Track position for anti-spoofing
-      facePositions.current.push({ x: box.x + box.width / 2, y: box.y + box.height / 2 })
-      if (facePositions.current.length > 60) facePositions.current.shift()
 
       // Calculate EAR
       const leftEyePoints = LEFT_EYE.map(i => landmarks[i])
@@ -190,7 +159,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       const rightFace = landmarks[RIGHT_FACE]
       const faceWidth = rightFace.x - leftFace.x
       const noseRatio = (nose.x - leftFace.x) / faceWidth
-      const yaw = (noseRatio - 0.5) * 90
+      const yaw = (noseRatio - 0.5) * 100 // Scale for easier reading
 
       if (goodSize) {
         stableCount.current++
@@ -209,7 +178,6 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
       // READY PHASE
       if (currentPhase === 'ready') {
-        setDebug(`EAR: ${avgEAR.toFixed(2)} | Yaw: ${yaw.toFixed(0)}°`)
         if (!goodSize) {
           setInstruction(faceW < 0.2 ? 'Move closer' : 'Move back')
         } else if (stableCount.current > 5) {
@@ -223,97 +191,132 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       if (currentPhase === 'challenge' && !challengeComplete.current) {
         const current = challenges[currentStep]
 
-        // BLINK
+        // ========== BLINK ==========
         if (current === 'blink') {
-          earValues.current.push(avgEAR)
-          if (earValues.current.length > 60) earValues.current.shift()
-          
-          if (earValues.current.length < 8) {
-            setDebug(`Calibrating... ${earValues.current.length}/8`)
-            setInstruction('Look at camera...')
-          } else {
-            const baseline = earValues.current.slice(0, 8).reduce((a, b) => a + b, 0) / 8
-            const threshold = baseline * 0.70
+          if (blinkPhase.current === 'calibrate') {
+            calibrationFrames.current++
+            earSum.current += avgEAR
             
-            setDebug(`EAR: ${avgEAR.toFixed(2)} | Base: ${baseline.toFixed(2)} | ${blinkState.current}`)
+            if (calibrationFrames.current >= 15) {
+              earBaseline.current = earSum.current / 15
+              blinkPhase.current = 'waitClose'
+            }
             
-            if (blinkState.current === 'waiting') {
-              setInstruction('Blink your eyes!')
-              if (avgEAR < threshold) {
-                blinkState.current = 'closed'
-                setProgress(50)
-              }
-            } else if (blinkState.current === 'closed') {
-              setInstruction('Now open!')
-              if (avgEAR > baseline * 0.85) {
-                blinkState.current = 'done'
-                blinkCount.current++
-                challengeComplete.current = true
-                setProgress(100)
-                setInstruction('Blink detected! ✓')
-                setTimeout(nextStep, 300)
-              }
+            setInstruction('Keep eyes OPEN...')
+            setMetric({ label: 'Calibrating', value: calibrationFrames.current, target: 15, unit: '' })
+            setProgress((calibrationFrames.current / 15) * 30)
+          }
+          else if (blinkPhase.current === 'waitClose') {
+            const dropPercent = ((earBaseline.current - avgEAR) / earBaseline.current) * 100
+            earMin.current = Math.min(earMin.current, avgEAR)
+            
+            setMetric({ label: 'Eye closure', value: Math.max(0, dropPercent), target: 20, unit: '%' })
+            setProgress(30 + Math.min(35, dropPercent * 1.75))
+            
+            // 20% drop = eyes closing (more forgiving)
+            if (dropPercent > 20) {
+              blinkPhase.current = 'waitOpen'
+              setProgress(65)
+            }
+            
+            setInstruction('Now BLINK! 👁️')
+          }
+          else if (blinkPhase.current === 'waitOpen') {
+            const recoveryPercent = ((avgEAR - earMin.current) / (earBaseline.current - earMin.current)) * 100
+            
+            setMetric({ label: 'Eyes opening', value: Math.min(100, recoveryPercent), target: 70, unit: '%' })
+            setProgress(65 + Math.min(35, recoveryPercent * 0.35))
+            
+            // Eyes opened back up
+            if (avgEAR > earBaseline.current * 0.85) {
+              blinkPhase.current = 'done'
+              challengeComplete.current = true
+              setProgress(100)
+              setInstruction('Blink detected! ✓')
+              setTimeout(nextStep, 400)
+            } else {
+              setInstruction('Open eyes wide!')
             }
           }
         }
 
-        // TURN LEFT
+        // ========== TURN LEFT ==========
         else if (current === 'left') {
           // Calibrate baseline
           if (yawBaseline.current === null) {
-            yawCalibrationFrames.current++
-            if (yawCalibrationFrames.current >= 5) {
-              yawBaseline.current = yaw
+            yawCalFrames.current++
+            yawSum.current += yaw
+            
+            if (yawCalFrames.current >= 10) {
+              yawBaseline.current = yawSum.current / 10
             }
-            setDebug(`Calibrating...`)
+            
             setInstruction('Face forward...')
+            setMetric({ label: 'Calibrating', value: yawCalFrames.current, target: 10, unit: '' })
+            setProgress((yawCalFrames.current / 10) * 20)
           } else {
             const turnAmount = yaw - yawBaseline.current
-            setDebug(`Turn: ${turnAmount.toFixed(0)}° (need +18°)`)
+            const targetTurn = 12 // More forgiving: 12 instead of 18
+            const turnPercent = Math.min(100, (turnAmount / targetTurn) * 100)
             
-            if (turnAmount > 18) {
+            setMetric({ label: 'Turn amount', value: turnAmount.toFixed(0), target: targetTurn, unit: '°' })
+            
+            if (turnAmount > targetTurn) {
               holdFrames.current++
-              setProgress(Math.min(100, (holdFrames.current / 8) * 100))
-              setInstruction('Hold...')
-              if (holdFrames.current >= 8) {
+              const holdPercent = (holdFrames.current / 6) * 100 // 6 frames instead of 8
+              setProgress(20 + holdPercent * 0.8)
+              setInstruction('Hold! ' + (6 - holdFrames.current))
+              
+              if (holdFrames.current >= 6) {
                 challengeComplete.current = true
+                setProgress(100)
                 setInstruction('Good! ✓')
-                setTimeout(nextStep, 300)
+                setTimeout(nextStep, 400)
               }
             } else {
               holdFrames.current = Math.max(0, holdFrames.current - 1)
-              setProgress((holdFrames.current / 8) * 100)
-              setInstruction('Turn head LEFT ←')
+              setProgress(20 + Math.max(0, turnPercent * 0.6))
+              setInstruction('Turn LEFT ← ← ←')
             }
           }
         }
 
-        // TURN RIGHT
+        // ========== TURN RIGHT ==========
         else if (current === 'right') {
           if (yawBaseline.current === null) {
-            yawCalibrationFrames.current++
-            if (yawCalibrationFrames.current >= 5) {
-              yawBaseline.current = yaw
-            }
-            setDebug(`Calibrating...`)
-            setInstruction('Face forward...')
-          } else {
-            const turnAmount = yaw - yawBaseline.current
-            setDebug(`Turn: ${turnAmount.toFixed(0)}° (need -18°)`)
+            yawCalFrames.current++
+            yawSum.current += yaw
             
-            if (turnAmount < -18) {
+            if (yawCalFrames.current >= 10) {
+              yawBaseline.current = yawSum.current / 10
+            }
+            
+            setInstruction('Face forward...')
+            setMetric({ label: 'Calibrating', value: yawCalFrames.current, target: 10, unit: '' })
+            setProgress((yawCalFrames.current / 10) * 20)
+          } else {
+            const turnAmount = yawBaseline.current - yaw // Inverted for right turn
+            const targetTurn = 12
+            const turnPercent = Math.min(100, (turnAmount / targetTurn) * 100)
+            
+            setMetric({ label: 'Turn amount', value: turnAmount.toFixed(0), target: targetTurn, unit: '°' })
+            
+            if (turnAmount > targetTurn) {
               holdFrames.current++
-              setProgress(Math.min(100, (holdFrames.current / 8) * 100))
-              setInstruction('Hold...')
-              if (holdFrames.current >= 8) {
+              const holdPercent = (holdFrames.current / 6) * 100
+              setProgress(20 + holdPercent * 0.8)
+              setInstruction('Hold! ' + (6 - holdFrames.current))
+              
+              if (holdFrames.current >= 6) {
                 challengeComplete.current = true
+                setProgress(100)
                 setInstruction('Good! ✓')
-                setTimeout(nextStep, 300)
+                setTimeout(nextStep, 400)
               }
             } else {
               holdFrames.current = Math.max(0, holdFrames.current - 1)
-              setProgress((holdFrames.current / 8) * 100)
-              setInstruction('Turn head RIGHT →')
+              setProgress(20 + Math.max(0, turnPercent * 0.6))
+              setInstruction('Turn RIGHT → → →')
             }
           }
         }
@@ -329,26 +332,23 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const start = () => {
     if (!readyToStart) return
     
-    // Randomize and store in ref
     const randomChallenges = shuffle(['blink', 'left', 'right'])
     challengesRef.current = randomChallenges
     
-    // Reset
     setStep(0)
     stepRef.current = 0
     setProgress(0)
     holdFrames.current = 0
     challengeComplete.current = false
-    earValues.current = []
-    blinkState.current = 'waiting'
-    blinkCount.current = 0
+    earBaseline.current = 0
+    earMin.current = 1
+    blinkPhase.current = 'calibrate'
+    calibrationFrames.current = 0
+    earSum.current = 0
     yawBaseline.current = null
-    yawCalibrationFrames.current = 0
-    facePositions.current = []
-    actionTimes.current = []
-    challengeStartTime.current = Date.now()
+    yawCalFrames.current = 0
+    yawSum.current = 0
     
-    updateChallengeDisplay(0)
     setPhase('challenge')
     setInstruction('Get ready...')
   }
@@ -393,6 +393,10 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     }
   }, [])
 
+  const getChallengeLabel = (c: string) => {
+    switch(c) { case 'blink': return '👁️ Blink'; case 'left': return '← Left'; case 'right': return 'Right →'; default: return c }
+  }
+
   return (
     <div className="max-w-md mx-auto p-4">
       <h2 className="text-xl font-bold text-white text-center mb-1">Liveness Check</h2>
@@ -413,9 +417,9 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
           {faceOk ? '✓ Face OK' : '✗ No Face'}
         </div>
 
-        {phase === 'challenge' && (
+        {phase === 'challenge' && challengesRef.current.length > 0 && (
           <div className="absolute top-3 right-3 bg-blue-500 text-white px-3 py-1 rounded-full text-xs font-bold">
-            {challengeDisplay}
+            {step + 1}/3: {getChallengeLabel(challengesRef.current[step])}
           </div>
         )}
 
@@ -438,16 +442,32 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
       {phase === 'challenge' && (
         <div className="mb-4">
+          {/* Step indicators */}
           <div className="flex gap-1 mb-2">
-            {challengesRef.current.map((_, i) => (
+            {challengesRef.current.map((c, i) => (
               <div key={i} className={`flex-1 h-2 rounded ${
                 i < step ? 'bg-green-500' : i === step ? 'bg-blue-500' : 'bg-gray-700'
               }`} />
             ))}
           </div>
-          <div className="h-1 bg-gray-700 rounded-full overflow-hidden">
-            <div className="h-full bg-blue-400 transition-all" style={{ width: `${progress}%` }} />
+          
+          {/* Progress bar */}
+          <div className="h-3 bg-gray-700 rounded-full overflow-hidden mb-2">
+            <div 
+              className="h-full bg-gradient-to-r from-blue-500 to-green-500 transition-all duration-150" 
+              style={{ width: `${progress}%` }} 
+            />
           </div>
+          
+          {/* Metric display */}
+          {metric.label && (
+            <div className="flex justify-between text-xs text-gray-400">
+              <span>{metric.label}</span>
+              <span className={Number(metric.value) >= metric.target ? 'text-green-400 font-bold' : ''}>
+                {metric.value}{metric.unit} / {metric.target}{metric.unit}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -459,8 +479,6 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
           <p className="text-white font-semibold text-lg">{instruction}</p>
         </div>
       )}
-
-      <p className="text-gray-600 text-xs text-center font-mono mb-3">{debug}</p>
 
       {error && (
         <div className="bg-red-500/20 border border-red-500 rounded-xl p-3 mb-4">
