@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import * as faceapi from '@vladmandic/face-api'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://identis-production.up.railway.app'
@@ -9,7 +9,6 @@ interface Props {
   onNext: () => void
 }
 
-// Eye landmark indices for 68-point model
 const LEFT_EYE = [36, 37, 38, 39, 40, 41]
 const RIGHT_EYE = [42, 43, 44, 45, 46, 47]
 const NOSE_TIP = 30
@@ -37,15 +36,20 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const animRef = useRef(0)
+  const phaseRef = useRef(phase)
+  const stepRef = useRef(step)
   const holdCount = useRef(0)
   const stableCount = useRef(0)
   const blinkDetected = useRef(false)
   const earHistory = useRef<number[]>([])
-  const modelsLoaded = useRef(false)
 
   const challenges = ['blink', 'left', 'right']
 
-  const submit = useCallback(async (selfie: string) => {
+  // Keep refs in sync with state
+  useEffect(() => { phaseRef.current = phase }, [phase])
+  useEffect(() => { stepRef.current = step }, [step])
+
+  const submit = async (selfie: string) => {
     try {
       const res = await fetch(`${API_URL}/api/verify/liveness`, {
         method: 'POST',
@@ -59,9 +63,9 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
       setError('Verification failed')
       setPhase('error')
     }
-  }, [verificationId, onNext])
+  }
 
-  const capture = useCallback(() => {
+  const capture = () => {
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas) return ''
@@ -69,25 +73,25 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     canvas.height = video.videoHeight
     canvas.getContext('2d')?.drawImage(video, 0, 0)
     return canvas.toDataURL('image/jpeg', 0.85)
-  }, [])
+  }
 
-  const nextStep = useCallback(() => {
+  const nextStep = () => {
     holdCount.current = 0
     blinkDetected.current = false
     earHistory.current = []
     setProgress(0)
-    if (step >= challenges.length - 1) {
+    if (stepRef.current >= challenges.length - 1) {
       streamRef.current?.getTracks().forEach(t => t.stop())
       cancelAnimationFrame(animRef.current)
       submit(capture())
     } else {
       setStep(s => s + 1)
     }
-  }, [step, challenges.length, capture, submit])
+  }
 
-  const detect = useCallback(async () => {
+  const detect = async () => {
     const video = videoRef.current
-    if (!video || video.readyState < 2 || phase === 'done' || !modelsLoaded.current) {
+    if (!video || video.readyState < 2 || phaseRef.current === 'done') {
       animRef.current = requestAnimationFrame(detect)
       return
     }
@@ -132,18 +136,21 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
         setFaceOk(false)
       }
 
-      if (phase === 'ready') {
+      const currentPhase = phaseRef.current
+      const currentStep = stepRef.current
+
+      if (currentPhase === 'ready') {
         if (!goodSize) {
           setInstruction(faceW < 0.2 ? 'Move closer' : 'Move back')
-        } else if (faceOk) {
+        } else if (stableCount.current > 5) {
           setInstruction('Perfect! Tap Start')
         } else {
           setInstruction('Hold still...')
         }
       }
 
-      if (phase === 'challenge') {
-        const current = challenges[step]
+      if (currentPhase === 'challenge') {
+        const current = challenges[currentStep]
 
         if (current === 'blink') {
           earHistory.current.push(avgEAR)
@@ -193,9 +200,9 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     }
 
     animRef.current = requestAnimationFrame(detect)
-  }, [phase, step, challenges, nextStep])
+  }
 
-  const start = useCallback(() => {
+  const start = () => {
     if (!faceOk) return
     setStep(0)
     setProgress(0)
@@ -204,33 +211,43 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     earHistory.current = []
     setPhase('challenge')
     setInstruction('Blink your eyes')
-  }, [faceOk])
+  }
 
   useEffect(() => {
     let mounted = true
 
     const init = async () => {
       try {
+        console.log('Loading models...')
         setLoadingText('Loading face models...')
         
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URL),
-          faceapi.nets.faceLandmark68Net.loadFromUri(MODELS_URL)
-        ])
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URL)
+        console.log('TinyFaceDetector loaded')
+        
+        await faceapi.nets.faceLandmark68Net.loadFromUri(MODELS_URL)
+        console.log('FaceLandmark68Net loaded')
         
         if (!mounted) return
-        modelsLoaded.current = true
 
         setLoadingText('Starting camera...')
+        console.log('Requesting camera...')
+        
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
         })
-        if (!mounted) { stream.getTracks().forEach(t => t.stop()); return }
+        
+        if (!mounted) { 
+          stream.getTracks().forEach(t => t.stop())
+          return 
+        }
+        
         streamRef.current = stream
+        console.log('Camera stream obtained')
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           await videoRef.current.play()
+          console.log('Video playing')
         }
 
         setPhase('ready')
@@ -244,12 +261,13 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     }
 
     init()
+    
     return () => {
       mounted = false
       cancelAnimationFrame(animRef.current)
       streamRef.current?.getTracks().forEach(t => t.stop())
     }
-  }, [detect])
+  }, []) // Empty deps - only run once
 
   return (
     <div className="max-w-md mx-auto p-4">
