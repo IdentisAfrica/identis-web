@@ -260,7 +260,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
           faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
           {
             runtime: 'mediapipe',
-            solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh',
+            solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619',
             refineLandmarks: true,
             maxFaces: 1
           }
