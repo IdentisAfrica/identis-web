@@ -91,12 +91,13 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas) return ''
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    canvas.getContext('2d')?.drawImage(video, 0, 0)
-    return canvas.toDataURL('image/jpeg', 0.85)
+    const maxWidth = 640
+    const scale = Math.min(1, maxWidth / video.videoWidth)
+    canvas.width = video.videoWidth * scale
+    canvas.height = video.videoHeight * scale
+    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.7)
   }
-
   const nextStep = () => {
     holdFrames.current = 0
     challengeComplete.current = false
