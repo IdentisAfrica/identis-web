@@ -251,7 +251,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
 
         setLoadingText('Loading face model...')
         await faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URL)
-        await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODELS_URL)
+        await faceapi.nets.faceLandmark68Net.loadFromUri(MODELS_URL)
         if (!mounted) return
 
         setLoadingText('Starting camera...')
