@@ -190,7 +190,7 @@ export default function LandingPage({ onStartVerification }: Props) {
             <img src="/apple-touch-icon.png" alt="IDENTIS" className="w-8 h-8 rounded-lg" />
             <span className="font-bold">IDENTIS</span>
           </div>
-          <p className="text-navy-500 text-sm">© 2025 IDENTIS. Made in Nigeria 🇳🇬</p>
+          <div className="flex items-center gap-6 text-navy-500 text-sm"><a href="/terms" className="hover:text-white">Terms</a><a href="/privacy" className="hover:text-white">Privacy</a><a href="https://t.me/IdentisBot" className="hover:text-white">Telegram</a><span>© 2026 IDENTIS 🇳🇬</span></div>
         </div>
       </footer>
     </div>
