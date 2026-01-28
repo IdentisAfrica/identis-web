@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 interface Props {
   onStartVerification: () => void
@@ -16,6 +16,14 @@ const trackEvent = (event: string) => {
 }
 
 export default function LandingPage({ onStartVerification }: Props) {
+  const [verifiedCount, setVerifiedCount] = useState("50+");
+
+  useEffect(() => {
+    fetch("https://identis-production.up.railway.app/api/verify/stats")
+      .then(r => r.json())
+      .then(data => setVerifiedCount(data.formatted))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     trackEvent('page_view')
   }, [])
@@ -125,7 +133,7 @@ export default function LandingPage({ onStartVerification }: Props) {
         <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
           {[
             { value: '<60s', label: 'Verification Time' },
-            { value: '99.9%', label: 'Accuracy' },
+            { value: verifiedCount, label: 'Traders Verified' },
             { value: 'BVN', label: 'Verified Identity' },
             { value: '₦0', label: 'Fraud Losses' },
           ].map((stat, i) => (
