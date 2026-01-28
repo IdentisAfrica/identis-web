@@ -16,9 +16,14 @@ const trackEvent = (event: string) => {
 }
 
 export default function LandingPage({ onStartVerification }: Props) {
-  const verifiedCount = "50+";
+  const [verifiedCount, setVerifiedCount] = useState("50+");
 
   useEffect(() => {
+    fetch("https://identis-production.up.railway.app/api/verify/stats")
+      .then(r => r.json())
+      .then(data => setVerifiedCount(data.formatted))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     trackEvent('page_view')
   }, [])
