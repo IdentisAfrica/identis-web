@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://identis-production.up.railway.app'
@@ -22,75 +22,63 @@ interface Certificate {
 }
 
 export default function CertificateView() {
-  const { id } = useParams<{ id: string }>()
-  const [loading, setLoading] = useState(true)
+  const { id } = useParams()
   const [certificate, setCertificate] = useState<Certificate | null>(null)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
+    const fetchCertificate = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/verify/certificate/${id}`)
+        if (!res.ok) throw new Error('Certificate not found')
+        const data = await res.json()
+        setCertificate(data)
+      } catch (err) {
+        setError((err as Error).message)
+      } finally {
+        setLoading(false)
+      }
+    }
     fetchCertificate()
   }, [id])
-
-  const fetchCertificate = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/verify/certificate/${id}`)
-      const data = await res.json()
-
-      if (res.ok) {
-        setCertificate(data)
-      } else {
-        setError(data.error || 'Certificate not found')
-      }
-    } catch (err) {
-      setError('Failed to load certificate')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const getTrustColor = (level: string) => {
-    switch (level) {
-      case 'FULLY_TRUSTED': return 'emerald'
-      case 'MODERATELY_TRUSTED': return 'blue'
-      case 'LIMITED_TRUST': return 'amber'
-      default: return 'gray'
-    }
-  }
-
-  const isExpired = certificate?.expiresAt ? new Date(certificate.expiresAt) < new Date() : false
 
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0a0f1c] flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-400">Loading certificate...</p>
+          <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-white">Loading certificate...</p>
         </div>
       </div>
     )
   }
 
-  if (error) {
+  if (error || !certificate) {
     return (
       <div className="min-h-screen bg-[#0a0f1c] flex items-center justify-center p-4">
-        <div className="bg-gray-900 rounded-3xl border border-gray-800 p-8 max-w-md w-full text-center">
-          <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/30">
-            <span className="text-4xl">❌</span>
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-2">Invalid Certificate</h2>
+        <div className="text-center max-w-md">
+          <div className="text-6xl mb-4">❌</div>
+          <h2 className="text-2xl font-bold text-white mb-2">Certificate Not Found</h2>
           <p className="text-gray-400 mb-6">{error}</p>
-          <Link
-            to="/"
-            className="inline-block px-8 py-3 bg-gray-800 text-white rounded-xl font-semibold hover:bg-gray-700 transition"
-          >
-            Go to IDENTIS
+          <Link to="/" className="px-6 py-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 inline-block">
+            Go Home
           </Link>
         </div>
       </div>
     )
   }
 
-  const color = getTrustColor(certificate?.trustLevel || '')
+  const isExpired = new Date(certificate.expiresAt) < new Date()
+  
+  const getColor = (level: string) => {
+    if (level === 'FULLY_TRUSTED') return 'emerald'
+    if (level === 'MODERATELY_TRUSTED') return 'blue'
+    if (level === 'LIMITED_TRUST') return 'amber'
+    return 'gray'
+  }
+  
+  const color = getColor(certificate.trustLevel)
 
   return (
     <div className="min-h-screen bg-[#0a0f1c] p-4">
@@ -191,10 +179,17 @@ export default function CertificateView() {
             </div>
           </div>
 
+          {/* Version Disclaimer */}
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 mb-6">
+            <p className="text-blue-400 text-xs text-center">
+              ℹ️ Liveness detection v1.0 — Enhanced verification coming soon
+            </p>
+          </div>
+
           {/* Certificate ID */}
           <div className="bg-gray-800 rounded-xl p-4 text-center">
             <p className="text-gray-500 text-xs mb-1">Certificate ID</p>
-            <p className="font-mono text-white">{certificate?.certificateId}</p>
+            <p className="font-mono text-white text-sm">{certificate?.certificateId}</p>
           </div>
         </div>
 
