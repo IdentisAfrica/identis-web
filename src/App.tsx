@@ -3,6 +3,7 @@ import { useState, lazy, Suspense } from 'react'
 import LandingPage from './components/LandingPage'
 import Terms from './pages/Terms'
 import Privacy from './pages/Privacy'
+import Contact from './pages/Contact'
 
 // Lazy load heavy components (face-api.js is ~1.5MB)
 const VerificationFlow = lazy(() => import('./components/VerificationFlow'))
@@ -63,6 +64,7 @@ function App() {
         } />
         <Route path="/terms" element={<Terms />} />
         <Route path="/privacy" element={<Privacy />} />
+        <Route path="/contact" element={<Contact />} />
       </Routes>
     </BrowserRouter>
   )
