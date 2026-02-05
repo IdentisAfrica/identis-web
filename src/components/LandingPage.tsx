@@ -46,12 +46,17 @@ export default function LandingPage({ onStartVerification }: Props) {
         <div className="flex items-center gap-3">
           <img src="/identis-logo.png" alt="IDENTIS" className="h-20 w-auto" />
         </div>
-        <button
-          onClick={handleGetVerified}
-          className="px-6 py-3 bg-white text-navy-900 rounded-full font-semibold hover:bg-navy-50 transition"
-        >
-          Get Verified
-        </button>
+        <div className="flex items-center gap-4">
+          <a href="/contact" className="text-navy-300 hover:text-white transition font-medium">
+            Contact
+          </a>
+          <button
+            onClick={handleGetVerified}
+            className="px-6 py-3 bg-white text-navy-900 rounded-full font-semibold hover:bg-navy-50 transition"
+          >
+            Get Verified
+          </button>
+        </div>
       </nav>
 
       {/* Urgency Banner */}
@@ -98,20 +103,16 @@ export default function LandingPage({ onStartVerification }: Props) {
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <img src="/apple-touch-icon.png" alt="IDENTIS" className="w-8 h-8 rounded-lg" />
-                  <span className="font-bold">IDENTIS Certificate</span>
+                  <span className="font-bold">IDENTIS</span>
                 </div>
-                <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-sm font-semibold">
-                  ✓ Verified
-                </span>
+                <div className="px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-sm font-bold">
+                  FULLY TRUSTED
+                </div>
               </div>
 
-              <div className="text-center py-8">
-                <div className="inline-flex items-center justify-center w-32 h-32 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-lg shadow-emerald-500/30 mb-4">
-                  <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <p className="text-xl font-bold text-emerald-400">Fully Verified</p>
+              <div className="mb-6">
+                <div className="w-16 h-16 bg-navy-800 rounded-full mb-3" />
+                <p className="font-bold text-lg">Verified Trader</p>
                 <p className="text-navy-400 text-sm mt-1">BVN Verified</p>
               </div>
 
@@ -278,6 +279,7 @@ export default function LandingPage({ onStartVerification }: Props) {
             <span className="font-bold">IDENTIS</span>
           </div>
           <div className="flex items-center gap-6 text-navy-500 text-sm">
+            <a href="/contact" className="hover:text-white">Contact</a>
             <a href="/terms" className="hover:text-white">Terms</a>
             <a href="/privacy" className="hover:text-white">Privacy</a>
             <a href="https://t.me/IdentisBot" className="hover:text-white">Telegram</a>
