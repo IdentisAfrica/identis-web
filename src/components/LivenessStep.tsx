@@ -402,6 +402,7 @@ export default function LivenessStep({ verificationId, onNext }: Props) {
     <div className="max-w-md mx-auto p-4">
       <h2 className="text-xl font-bold text-white text-center mb-1">Liveness Check</h2>
       <p className="text-gray-400 text-sm text-center mb-4">Follow the instructions</p>
+      <p className="text-yellow-400 text-xs text-center mb-2">⚠️ Beta: We are still fine-tuning this feature</p>
 
       <div className="relative aspect-[3/4] bg-black rounded-2xl overflow-hidden mb-4">
         <video ref={videoRef} playsInline muted className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
