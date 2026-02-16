@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://identis-production.up.railway.app'
 
@@ -11,13 +11,18 @@ interface Props {
 export default function PaymentStep({ verificationId, onNext, onBack }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [paymentUrl, setPaymentUrl] = useState('')
 
-  const handleSkipPayment = async () => {
+  useEffect(() => {
+    initializePayment()
+  }, [])
+
+  const initializePayment = async () => {
     setLoading(true)
     setError('')
 
     try {
-      const res = await fetch(`${API_URL}/api/payment/demo-skip`, {
+      const res = await fetch(`${API_URL}/api/payment/initialize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ verificationId })
@@ -25,15 +30,21 @@ export default function PaymentStep({ verificationId, onNext, onBack }: Props) {
 
       const data = await res.json()
 
-      if (data.success) {
-        onNext()
+      if (data.success && data.authorizationUrl) {
+        setPaymentUrl(data.authorizationUrl)
       } else {
-        setError(data.error || 'Failed to process')
+        setError(data.error || 'Failed to initialize payment')
       }
     } catch (err) {
       setError('Network error. Please try again.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handlePayment = () => {
+    if (paymentUrl) {
+      window.location.href = paymentUrl
     }
   }
 
@@ -90,8 +101,8 @@ export default function PaymentStep({ verificationId, onNext, onBack }: Props) {
       )}
 
       <button
-        onClick={handleSkipPayment}
-        disabled={loading}
+        onClick={handlePayment}
+        disabled={loading || !paymentUrl}
         className="w-full py-4 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-xl font-semibold text-lg hover:from-emerald-600 hover:to-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-500/20 mb-3"
       >
         {loading ? (
@@ -100,15 +111,15 @@ export default function PaymentStep({ verificationId, onNext, onBack }: Props) {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
             </svg>
-            Processing...
+            Initializing payment...
           </span>
         ) : (
-          'Continue (Demo) →'
+          'Pay ₦2,500 →'
         )}
       </button>
 
       <p className="text-center text-xs text-gray-500 mb-4">
-        Demo mode: Payment skipped for testing
+        🔒 Secure payment powered by Paystack
       </p>
 
       <button
